@@ -137,21 +137,11 @@ reboot
 The first boot takes a few minutes. The fan runs at full speed and the LED blinks until
 setup installs fan control. That's normal.
 
-Find the new system:
+The NAS **gets its address from your router**, just like before. On this model OpenWrt
+starts as a DHCP client, and it keeps WD's original MAC address, so the router usually gives
+it the same IP as under WD's firmware. If not, look for it in your router's device list.
 
-- **As a DHCP client** (most likely): it appears in your router's device list with a new
-  address. Try `ssh root@<new IP>`; there's no password yet.
-- **As `192.168.1.1`** (the wiki's listed default): unplug it from your home network so it
-  doesn't clash with your router. Connect it directly to your computer, give the computer
-  `192.168.1.2`, then:
-  ```sh
-  ssh root@192.168.1.1
-  uci set network.lan.proto=dhcp; uci delete network.lan.ipaddr; uci delete network.lan.netmask
-  uci commit network; reboot
-  ```
-  Then plug it back into your home network.
-
-Set a root password:
+Log in (there's no password yet) and set a root password:
 
 ```sh
 ssh root@<NAS IP> passwd

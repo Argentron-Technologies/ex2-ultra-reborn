@@ -115,6 +115,11 @@ Trust them over forum posts, and over your own assumptions.
   serial, then `sysupgrade -n`.
 - Serial: header JP2, pin 1 RX, pin 2 GND, pin 5 TX, 3.3 V, 115200 8N1.
 - The OpenWrt kernel ignores U-Boot's command line and WD's uRamdisk (mtd2).
+- **Network after flashing: DHCP client, not 192.168.1.1.** OpenWrt's
+  `/etc/board.d/02_network` sets `ucidef_set_interface_lan "eth0" "dhcp"` for
+  `wd,cloud-ex2-ultra`, and reads WD's original MAC from the flash, so the router usually
+  hands out the same IP as before. The wiki's "192.168.1.1" table is the generic template;
+  don't copy it into the docs.
 - No system suspend (`/sys/power` is missing). There's no CPU idle or frequency scaling on
   Armada 38x either, so the SoC idles around 70 °C. That's normal.
 
