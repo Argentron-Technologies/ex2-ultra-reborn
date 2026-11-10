@@ -68,4 +68,6 @@ for Windows or your phone works too.
 | `scp: unknown option -- O` | Windows 10's older scp doesn't know `-O`. Run the command without it (`setup.cmd` does this for you). |
 | "running scripts is disabled on this system" | Use the `.cmd` launchers. They start PowerShell with the right setting for these scripts only. |
 | `can't log in ... with your SSH key` | Run `.\setup.cmd key` first. |
+| `Host key verification failed` or "the NAS's SSH identity changed" | Normal right after installing OpenWrt: the preflight saved the WD firmware's SSH identity for the same address. Run `.\setup.cmd key` and answer `y` when it asks to forget the old identity. Answer `N` if you did *not* just reinstall the NAS. |
+| Installed from Windows before November 2026 | Run `.\setup.cmd update` once. Older versions left the dashboard files writable by every user on the NAS, and the dashboard's NAS pages could fail to load. |
 | `\\nas.local` not found | Use the IP address instead: `\\192.168.1.50`. |

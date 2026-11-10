@@ -115,6 +115,8 @@ You get an e-mail when the rebuild starts and when it finishes.
 
 | Symptom | Fix |
 |---|---|
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` right after installing OpenWrt | Expected: the preflight saved the WD firmware's SSH identity for the same address. Mac/Linux: `ssh-keygen -R <NAS IP>`, then connect again. Windows: `.\setup.cmd key` offers to do this. Only do it if you just reinstalled the NAS. |
+| Dashboard's NAS pages fail to load after installing from Windows | Installs from Windows before November 2026 left files writable by everyone, and rpcd skipped the dashboard backend. Run `.\setup.cmd update` once. |
 | Dashboard shows old pages after an update | `nas# touch /lib/apk/db/installed`, then reload the page (`setup.sh update` does this for you) |
 | Dashboard says "Storage is offline" | `nas# cat /proc/mdstat`. If md1 isn't running: `nas# /etc/init.d/nas-datamount start`. It re-assembles the mirror from its own disks and mounts it. |
 | NAS missing in Finder or Time Machine | `nas# /etc/init.d/avahi-daemon restart`. If the log says "not allowed to own org.freedesktop.Avahi", run `nas# kill -HUP $(pidof dbus-daemon)` first. |
