@@ -1,0 +1,16 @@
+# E-mail alerts and safety limits. Fill in with:  ./setup.sh alerts
+# (the SMTP password goes in /etc/nas-alert.pass, never in this file)
+config alert 'main'
+	option enabled '0'
+	option to 'you@example.com'
+	option from 'nas@example.com'
+	option smtp_host 'smtp.example.com'
+	option smtp_port '587'
+	option smtp_user 'nas@example.com'
+	option disk_temp_max '55'
+	option storage_max_pct '90'
+	option link_down_min_s '30'
+	option shutdown_disk_temp '70'
+	option shutdown_board_temp '82'
+	option shutdown_soc_temp '100'
+	option idle_poweroff_hours '0'

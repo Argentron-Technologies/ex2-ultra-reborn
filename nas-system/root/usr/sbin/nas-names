@@ -1,0 +1,68 @@
+#!/bin/sh
+# nas-names: the NAS's display name and local name.
+#
+#   Name        shown in Finder, Windows Network and the dashboard ("Family NAS")
+#   Local name  the network address, <local name>.local (also the SMB/NetBIOS name)
+#
+#   nas-names apply                    rewrite the Bonjour/Avahi record from uci
+#   nas-names set "<Name>" <localname> change both and restart the services that use them
+#
+# Samba's own mDNS registration is turned off; this script publishes the same
+# records (SMB, Mac icon, Time Machine) under the display name instead.
+
+SVC=/etc/avahi/services/nas.service
+TPL=/etc/samba/smb.conf.template
+
+display_name() {
+	n=$(uci -q get system.@system[0].description)
+	[ -n "$n" ] && echo "$n" || uci -q get system.@system[0].hostname
+}
+xml() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+
+apply() {
+	if ! grep -q "multicast dns register" $TPL; then
+		# first run: stop Samba advertising itself, or our record collides with its own
+		sed -i '/^\[global\]/a\	multicast dns register = no' $TPL
+		/etc/init.d/samba4 restart >/dev/null 2>&1; sleep 2
+	fi
+	n=$(display_name | xml)
+	tm=""; i=0
+	for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\([^.]*\)\.timemachine='1'$/\1/p"); do
+		sn=$(uci -q get samba4.$sec.name | xml)
+		tm="$tm<txt-record>dk$i=adVN=$sn,adVF=0x82</txt-record>"; i=$((i + 1))
+	done
+	{
+		echo '<?xml version="1.0" standalone="no"?>'
+		echo '<!DOCTYPE service-group SYSTEM "avahi-service.dtd">'
+		echo '<service-group>'
+		echo "  <name>$n</name>"
+		echo '  <service><type>_smb._tcp</type><port>445</port></service>'
+		echo '  <service><type>_device-info._tcp</type><port>0</port><txt-record>model=MacSamba</txt-record></service>'
+		[ -n "$tm" ] && echo "  <service><type>_adisk._tcp</type><port>9</port><txt-record>sys=waMa=0,adVF=0x100</txt-record>$tm</service>"
+		echo '</service-group>'
+	} > $SVC.tmp && chmod 644 $SVC.tmp && mv $SVC.tmp $SVC
+	avahi-daemon -r >/dev/null 2>&1
+}
+
+set_names() {
+	name=$1 host=$2
+	echo "$host" | grep -qE '^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$' || { echo "bad local name" >&2; exit 1; }
+	uci set system.@system[0].description="$name"
+	uci set system.@system[0].hostname="$host"
+	uci commit system
+	uci set samba4.@samba[0].description="$name"
+	uci commit samba4
+	echo "$host" > /proc/sys/kernel/hostname
+	apply
+	logger -t nas-names "name \"$name\", local name $host.local"
+	/etc/init.d/system reload
+	/etc/init.d/samba4 restart
+	/etc/init.d/avahi-daemon restart
+	/etc/init.d/wsdd2 restart
+}
+
+case "$1" in
+	apply) apply ;;
+	set)   set_names "$2" "$3" ;;
+	*)     echo "usage: nas-names apply | set \"<Name>\" <localname>" >&2; exit 1 ;;
+esac

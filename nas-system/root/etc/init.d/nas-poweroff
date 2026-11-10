@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+# Last shutdown step: if this is a power-off (mark set by /usr/sbin/nas-poweroff),
+# tell the MCU to cut the power. Runs after K90umount, so the disks are already
+# unmounted. Never acts on a reboot.
+#
+# MCU command from WD firmware 5.29.102 (up_send_ctl "DeviceShutdown <seconds>"):
+#   FA 03 03 01 01 <seconds> FB  -> MCU cuts power <seconds> later.
+# WD's shutdown.sh sends it and then halts the kernel; we do the same.
+
+START=99
+STOP=99
+DELAY=10   # seconds: enough for the kernel to finish halting
+
+start() {
+	rm -f /tmp/nas-poweroff
+}
+
+stop() {
+	[ -f /tmp/nas-poweroff ] || return 0
+	# Wake-on-LAN in the network chip was armed by /usr/sbin/nas-poweroff while eth0 was up.
+	# Best effort: record its state at this last moment. K90umount may already have made the
+	# overlay read-only ("umount -a -r"), in which case this line is simply not saved.
+	echo "$(date '+%F %T') K99: 18_3=$(mdio f1072004.mdio-mii mva 0 raw 3:18 2>/dev/null) 18_0=$(mdio f1072004.mdio-mii mva 0 raw 0:18 2>/dev/null) 16_17=$(mdio f1072004.mdio-mii mva 0 raw 17:16 2>/dev/null)" >> /etc/nas-poweroff.last 2>/dev/null
+	sync
+	stty -F /dev/ttyS1 19200 raw -echo -crtscts cs8 -cstopb -parenb 2>/dev/null
+	printf "\xFA\x03\x0a\x01\x00\x00\xFB" > /dev/ttyS1   # MCU: WOLStatusEnable (WD up_send_ctl table)
+	sleep 1
+	stty -F /dev/ttyS1 19200 raw -echo -crtscts cs8 -cstopb -parenb 2>/dev/null
+	printf "\xFA\x03\x03\x01\x01\x$(printf %02x $DELAY)\xFB" > /dev/ttyS1
+	logger -t nas-poweroff "MCU will cut power in $DELAY s"
+}

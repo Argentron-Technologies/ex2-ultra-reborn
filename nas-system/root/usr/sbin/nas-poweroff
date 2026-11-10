@@ -1,0 +1,27 @@
+#!/bin/sh
+# nas-poweroff: shut down and let the MCU really cut the power (like WD's firmware).
+# Marks this shutdown as a power-off; /etc/init.d/nas-poweroff (last shutdown step,
+# after all disks are unmounted) then asks the MCU to cut power. Plain "reboot" never
+# sets the mark, so restarts are unaffected. Wake it again with Wake-on-LAN or by
+# re-plugging the power cable.
+touch /tmp/nas-poweroff
+logger -t nas-poweroff "power-off requested${1:+: $*}"
+# Arm Wake-on-LAN now, while eth0 is still up: Linux's m88e1318_set_wol sets the
+# same PHY registers as WD's set_wol (MAC, magic-packet match, LED[2] as INTn, WOL
+# interrupt). With WoL armed, phy_suspend() leaves the PHY powered at shutdown.
+# "wol d" first: Linux skips set_wol when the requested mode equals the current one
+# (net/ethtool/wol.c: "if (!mod) return 0"), and the PHY already reports "g" from its
+# magic-packet bit, so a plain "wol g" would leave the wake pin (18_3.7) and the WOL
+# interrupt (18_0.7) unset - verified on 2026-11-07 with mdio reads.
+out=$( { ethtool -s eth0 wol d && ethtool -s eth0 wol g; } 2>&1 )
+tcr=$(mdio f1072004.mdio-mii mva 0 raw 3:18 2>/dev/null)
+ier=$(mdio f1072004.mdio-mii mva 0 raw 0:18 2>/dev/null)
+msg="Wake-on-LAN: ethtool=${out:-ok} 18_3=$tcr 18_0=$ier"
+if [ $(( tcr & 0x80 )) -ne 0 ] 2>/dev/null && [ $(( ier & 0x80 )) -ne 0 ] 2>/dev/null; then
+	msg="$msg (armed)"
+else
+	msg="$msg (WARNING: not armed)"
+fi
+logger -t nas-poweroff "$msg"; echo "$msg"
+echo "$(date '+%F %T') $msg" > /etc/nas-poweroff.last   # survives the power cut, for checking afterwards
+exec /sbin/poweroff

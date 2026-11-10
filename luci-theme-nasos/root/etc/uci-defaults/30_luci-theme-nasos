@@ -1,0 +1,12 @@
+#!/bin/sh
+
+if [ "$PKG_UPGRADE" != 1 ]; then
+	uci get luci.themes.NASOS >/dev/null 2>&1 || \
+	uci batch <<-EOF2
+		set luci.themes.NASOS=/luci-static/nasos
+		set luci.main.mediaurlbase=/luci-static/nasos
+		commit luci
+	EOF2
+fi
+
+exit 0

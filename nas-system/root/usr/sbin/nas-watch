@@ -1,0 +1,188 @@
+#!/bin/sh
+# nas-watch: checks NAS health every minute and sends e-mail alerts.
+# Never touches a sleeping disk.
+
+MD=/sys/block/md1/md
+DATA=/mnt/data
+NET=eth0
+CLEAN=/etc/nas-watch.clean     # written on clean shutdown
+S=/tmp/nas-watch; mkdir -p $S
+
+cfg() { uci -q get nas-alert.main.$1; }
+alert() { /usr/sbin/nas-alert send "$@"; }
+hours_min() { s=$1; [ $s -ge 3600 ] && echo "$((s/3600)) h $((s%3600/60)) min" || { [ $s -ge 60 ] && echo "$((s/60)) min $((s%60)) s" || echo "$s s"; }; }
+spinning() { ! hdparm -C /dev/$1 2>/dev/null | grep -q standby; }
+disks() { for d in /sys/block/sd?; do [ -e $d/device ] && echo ${d##*/}; done; }
+
+boot_check() {
+	if [ -f $CLEAN ]; then
+		rm -f $CLEAN
+	else
+		# wait for the network so the mail can go out
+		for i in $(seq 1 30); do [ "$(cat /sys/class/net/$NET/carrier 2>/dev/null)" = 1 ] && break; sleep 10; done
+		sleep 20
+		alert power "NAS restarted unexpectedly" \
+"The NAS started up without a clean shutdown first.\nThis usually means the power was cut, or the system crashed.\n\nIt is running again now. Check that your files and the disks look normal." 0
+	fi
+}
+
+check_link() {
+	c=$(cat /sys/class/net/$NET/carrier 2>/dev/null || echo 0)
+	# the link comes up a few seconds after boot: only count outages once it has been up
+	[ "$c" = 1 ] && touch $S/link_seen
+	[ -f $S/link_seen ] || return
+	if [ "$c" != 1 ]; then
+		[ -f $S/link_down ] || date +%s > $S/link_down
+	elif [ -f $S/link_down ]; then
+		down=$(( $(date +%s) - $(cat $S/link_down) )); rm -f $S/link_down
+		[ $down -ge $(cfg link_down_min_s || echo 30) ] && /usr/sbin/nas-alert clear link && \
+			alert link "Network link was down for $(hours_min $down)" \
+"The NAS lost its network connection (cable unplugged, or the router or switch restarted).\nIt was offline for $(hours_min $down) and is back online now." 0
+	fi
+}
+
+check_raid() {
+	[ -r $MD/array_state ] || { alert raid_missing "RAID array is not running" "The data RAID (md1) is not running. Your shares are probably unavailable." 6; return; }
+	deg=$(cat $MD/degraded); act=$(cat $MD/sync_action); tot=$(cat $MD/raid_disks)
+	prev=$(cat $S/raid 2>/dev/null)
+	now="$deg/$act"; echo "$now" > $S/raid
+	[ -z "$prev" ] && prev=$now
+	# newly degraded: drop the repeat timer so this one is sent at once
+	[ "${prev%%/*}" = 0 ] && [ "$deg" -gt 0 ] && /usr/sbin/nas-alert clear raid_degraded
+	if [ "$deg" -gt 0 ] && [ "$act" != recover ]; then
+		alert raid_degraded "RAID degraded: $((tot-deg)) of $tot disks" \
+"Your data is no longer mirrored: only $((tot-deg)) of $tot disks are working.\nOne more disk failure means data loss.\n\nInsert or replace the missing disk to restore protection." 24
+	fi
+	case "$prev>$now" in
+		*/idle\>*/recover) alert raid_rebuild "RAID rebuild started" "The NAS is copying data to the new disk to restore the mirror.\nThis takes several hours. Keep the NAS powered on." 0 ;;
+		*/recover\>0/idle) /usr/sbin/nas-alert clear raid_degraded; alert raid_ok "RAID rebuild finished: data is mirrored again" "Both disks are in sync. Your data is protected again." 0 ;;
+		*/check\>*/idle)
+			# monthly data check (cron) finished or was stopped
+			mm=$(cat $MD/mismatch_cnt 2>/dev/null || echo 0)
+			if [ "$mm" -gt 0 ] 2>/dev/null; then
+				alert raid_check "RAID check found $mm mismatched sectors" \
+"The monthly data check read both disks completely and found $mm sectors that differ between them.\nThis can point to a failing disk. Check the SMART status of both disks." 0
+			else
+				alert raid_check "RAID check passed" "The monthly data check read both disks completely. Both copies of your data match and every sector was readable." 0
+			fi ;;
+	esac
+}
+
+check_storage() {
+	if ! grep -q " $DATA " /proc/mounts; then
+		alert mount "Data volume is not mounted" "$DATA is not mounted, so shares and backups are unavailable." 6
+		return
+	fi
+	pct=$(df -k $DATA | awk 'NR==2 {gsub("%","",$5); print $5}')
+	max=$(cfg storage_max_pct || echo 90)
+	[ -n "$pct" ] && [ "$pct" -ge "$max" ] && alert storage "Storage ${pct}% full" \
+"The data volume is ${pct}% full ($(df -h $DATA | awk 'NR==2 {print $4}') free).\nFree up space or Time Machine and file copies will start failing." 24
+}
+
+check_disks() {
+	max=$(cfg disk_temp_max || echo 55)
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat $h/name 2>/dev/null)" = drivetemp ] || continue
+		d=$(ls $h/device/block 2>/dev/null | head -1); [ -n "$d" ] || continue
+		spinning $d || continue
+		t=$(( $(cat $h/temp1_input 2>/dev/null || echo 0) / 1000 ))
+		[ $t -ge $max ] && alert "temp_$d" "Disk $d is hot: ${t} °C" "Disk /dev/$d is at ${t} °C (limit ${max} °C). Check the fan and that the vents are not blocked." 3
+	done
+	# SMART health at most every 6 hours, and only on a spinning disk
+	last=$(cat $S/smart 2>/dev/null || echo 0)
+	[ $(( $(date +%s) - last )) -lt 21600 ] && return
+	date +%s > $S/smart
+	for d in $(disks); do
+		spinning $d || continue
+		out=$(smartctl -n standby -H /dev/$d 2>/dev/null)
+		echo "$out" | grep -q -E "FAILED|FAILING" && alert "smart_$d" "Disk $d is failing (SMART)" \
+"The disk's own health check reports a failure:\n\n$(echo "$out" | grep -i -E 'result|status')\n\nCopy important data off and replace this disk soon." 24
+	done
+}
+
+check_fan() {
+	lvl=$(cat /tmp/nas-fan.level 2>/dev/null); rpm=$(cat /tmp/nas-fan.rpm 2>/dev/null)
+	if pidof nas-fan >/dev/null 2>&1 || pgrep -f /usr/sbin/nas-fan >/dev/null; then :; else
+		alert fan_service "Fan control is not running" "The nas-fan service has stopped, so the fan is no longer adjusted for temperature." 6
+	fi
+	if [ -n "$lvl" ] && [ -n "$rpm" ] && [ "$rpm" -eq 0 ] 2>/dev/null; then
+		n=$(( $(cat $S/fan0 2>/dev/null || echo 0) + 1 )); echo $n > $S/fan0
+		[ $n -ge 3 ] && alert fan_stop "Fan has stopped" "The fan reports 0 rpm while it should be spinning. The NAS may overheat." 6
+	else rm -f $S/fan0; fi
+	# (no "fan at full speed" alert: full speed is normal while the board is above 60 °C)
+}
+
+# Overheat protection, like WD's firmware: shut down cleanly when something
+# stays too hot for 3 minutes in a row (only spinning disks are read).
+check_overheat() {
+	dmax=$(cfg shutdown_disk_temp || echo 70)
+	bmax=$(cfg shutdown_board_temp || echo 82)
+	smax=$(cfg shutdown_soc_temp || echo 100)
+	why=""
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat $h/name 2>/dev/null)" = drivetemp ] || continue
+		d=$(ls $h/device/block 2>/dev/null | head -1); [ -n "$d" ] || continue
+		spinning $d || continue
+		t=$(( $(cat $h/temp1_input 2>/dev/null || echo 0) / 1000 ))
+		[ $t -gt $dmax ] && why="$why disk $d ${t} °C (limit $dmax);"
+	done
+	b=$(cat /tmp/nas-fan.board 2>/dev/null)
+	# board value is written by nas-fan; only trust it if it is fresh (< 5 min)
+	if [ -n "$b" ] && [ "$b" -eq "$b" ] 2>/dev/null && \
+	   [ $(( $(date +%s) - $(date -r /tmp/nas-fan.board +%s 2>/dev/null || echo 0) )) -lt 300 ]; then
+		[ $b -gt $bmax ] && why="$why board ${b} °C (limit $bmax);"
+	fi
+	s=$(( $(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0) / 1000 ))
+	[ $s -gt $smax ] && why="$why processor ${s} °C (limit $smax);"
+
+	if [ -z "$why" ]; then rm -f $S/hot; return; fi
+	n=$(( $(cat $S/hot 2>/dev/null || echo 0) + 1 )); echo $n > $S/hot
+	logger -t nas-watch "overheat $n/3:$why"
+	[ $n -lt 3 ] && return
+	/usr/sbin/nas-alert clear overheat
+	alert overheat "NAS shut down: too hot" \
+"The NAS stayed too hot for 3 minutes and has shut itself down to protect the disks:\n$why\n\nCheck the fan and that the vents are not blocked before turning it on again." 0
+	sync
+	/usr/sbin/nas-poweroff overheat
+}
+
+# Idle power-off: after idle_poweroff_hours (default 48; 0 = never) with no reads or
+# writes on the data RAID, no SMB client connected and no RAID sync running, power
+# off for real (nas-poweroff arms Wake-on-LAN). The Mac's wake-nas agent wakes it
+# again when Time Machine needs it. Verified: md1 read/write counters stay constant
+# while nothing uses the NAS (2026-11-07).
+check_idle() {
+	h=$(cfg idle_poweroff_hours || echo 48)
+	[ "$h" -gt 0 ] 2>/dev/null || { rm -f $S/idle_since; return; }
+	now=$(date +%s)
+	io=$(awk '{print $1 "/" $5}' /sys/block/md1/stat 2>/dev/null)   # reads/writes completed
+	smb=$(netstat -tn 2>/dev/null | grep -c ':445 .*ESTABLISHED')
+	act=$(cat $MD/sync_action 2>/dev/null)
+	if [ ! -f $S/idle_since ] || [ "$io" != "$(cat $S/idle_io 2>/dev/null)" ] || \
+	   [ "$smb" -gt 0 ] || [ "$act" != idle ] || /usr/sbin/nas-coldsync running; then
+		echo "$io" > $S/idle_io; echo $now > $S/idle_since; return
+	fi
+	idle=$(( now - $(cat $S/idle_since) ))
+	[ $idle -lt $(( h * 3600 )) ] && return
+	logger -t nas-watch "idle for $(hours_min $idle): powering off"
+	/usr/sbin/nas-alert clear idle_off
+	alert idle_off "NAS powered off after $h hours without use" \
+"Nobody read or wrote files on the NAS for $h hours, so it has powered itself off to save power.\n\nIt wakes up by itself when your Mac needs it for Time Machine.\nTo wake it yourself: use a Wake-on-LAN app (MAC $(cat /sys/class/net/$NET/address)), run mac/wake-nas on your Mac, or unplug and replug the power cable." 0
+	sync
+	/usr/sbin/nas-poweroff idle
+}
+
+trap 'touch $CLEAN; sync; exit 0' TERM INT
+
+boot_check &
+while :; do
+	check_link
+	check_raid
+	check_storage
+	check_disks
+	check_fan
+	check_overheat
+	check_idle
+	/usr/sbin/nas-alert flush >/dev/null 2>&1
+	sleep 60 & wait $!
+done

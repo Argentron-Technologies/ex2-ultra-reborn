@@ -1,0 +1,27 @@
+#!/bin/sh
+# wake-nas-for-timemachine: run by launchd every 10 minutes on the Mac
+# (installed by ./install-wake-agent.sh, which fills in the settings below).
+# If Time Machine backs up to the NAS automatically, the Mac is on the home network,
+# and the NAS does not answer, send it a Wake-on-LAN magic packet so it is up for the
+# next hourly backup. Only useful if you turned on idle power-off on the NAS.
+NAS_HOST=${NAS_HOST:-nas.local}     # name or IP of the NAS
+NAS_MAC=${NAS_MAC:?set NAS_MAC}     # MAC address of the NAS (eth0)
+HOME_GW=${HOME_GW:?set HOME_GW}     # your router's IP: only wake when at home
+TM_MATCH=${TM_MATCH:-$NAS_HOST}     # text that identifies the NAS in "tmutil destinationinfo"
+DIR=$(cd "$(dirname "$0")" && pwd)
+LOG="$HOME/Library/Logs/wake-nas.log"
+
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+# Time Machine must be on and pointed at the NAS
+[ "$(defaults read /Library/Preferences/com.apple.TimeMachine AutoBackup 2>/dev/null)" = 1 ] || exit 0
+/usr/bin/tmutil destinationinfo 2>/dev/null | grep -q -i -F "$TM_MATCH" || exit 0
+
+# Only on the home network
+[ "$(route -n get default 2>/dev/null | awk '/gateway:/ {print $2}')" = "$HOME_GW" ] || exit 0
+
+# NAS already up?  (SMB port answers)
+/usr/bin/nc -z -G 3 "$NAS_HOST" 445 >/dev/null 2>&1 && exit 0
+
+/usr/bin/python3 -I "$DIR/wake-nas" "$NAS_MAC" >/dev/null 2>&1 && log "NAS not answering: Wake-on-LAN sent" \
+	|| log "NAS not answering: sending Wake-on-LAN FAILED"

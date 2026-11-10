@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+# Mount the data mirror once mdadm has assembled it (fstab runs earlier,
+# before /dev/md1 exists). Starts after mdadm (S13), before Samba (S98).
+
+START=14
+
+boot() {
+	for i in $(seq 1 60); do
+		[ "$(cat /sys/block/md1/md/array_state 2>/dev/null)" != "" ] && \
+		[ "$(cat /sys/block/md1/md/array_state)" != inactive ] && break
+		sleep 1
+	done
+	grep -q " /mnt/data " /proc/mounts || block mount
+	grep -q " /mnt/data " /proc/mounts || logger -t nas-datamount "data mirror could not be mounted"
+}
+
+start() { boot; }

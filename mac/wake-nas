@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Wake the NAS with a Wake-on-LAN magic packet (broadcast on the LAN).
+
+    ./wake-nas 00:11:22:33:44:55        or   NAS_MAC=00:11:22:33:44:55 ./wake-nas
+
+The NAS's MAC address is shown by:  ssh root@nas.local cat /sys/class/net/eth0/address
+"""
+import os, socket, sys
+
+MAC = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NAS_MAC", "")
+if not MAC:
+    sys.exit("usage: wake-nas <NAS MAC address>   (or set NAS_MAC)")
+mac = bytes.fromhex(MAC.replace(":", "").replace("-", ""))
+if len(mac) != 6:
+    sys.exit(f"not a MAC address: {MAC}")
+packet = b"\xff" * 6 + mac * 16
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    for port in (9, 7):
+        s.sendto(packet, ("255.255.255.255", port))
+print(f"magic packet sent to {MAC}")

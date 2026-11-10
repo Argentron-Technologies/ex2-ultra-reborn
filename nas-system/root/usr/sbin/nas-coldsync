@@ -1,0 +1,227 @@
+#!/bin/sh
+# nas-coldsync: copy NAS folders to a USB drive (cold storage) with rsync.
+#
+#   nas-coldsync start <copy|sync> <mountpoint> <folder>...   start a job in the background
+#   nas-coldsync confirm      Sync only: go ahead after the user saw what will be deleted
+#   nas-coldsync cancel       stop the running job (or drop one waiting for confirmation)
+#   nas-coldsync running      exit 0 while a job is checking or copying
+#   nas-coldsync uses <mp>    exit 0 if a job (running or waiting) targets this mountpoint
+#
+# Direction is always NAS -> USB. Folders land in <drive>/NAS-Backup/<folder>, so Sync can
+# only ever delete inside NAS-Backup, never other files on the drive. The RAID is only read.
+#
+# A job has two phases:
+#   check  rsync --dry-run: counts what will be copied (bytes, files) and, for Sync, what
+#          will be deleted. Sync with deletions stops here and waits for "confirm".
+#   copy   the real rsync; progress = bytes copied / bytes the check found.
+#
+# State for the dashboard lives in /tmp/nas-coldsync (status, progress, plan, deletes, err);
+# the result of the last finished job is kept on flash in /etc/nas-coldsync.last.
+
+D=/tmp/nas-coldsync
+LAST=${COLDSYNC_LAST:-/etc/nas-coldsync.last}
+DATA=${COLDSYNC_DATA:-/mnt/data}     # COLDSYNC_* overrides: testing only
+SUB=NAS-Backup
+mkdir -p $D
+
+log() { logger -t nas-coldsync "$*"; }
+setst() { # setst key=value ...: rewrite status, keeping keys not given
+	for kv in "$@"; do
+		k=${kv%%=*}
+		grep -v "^$k=" $D/status 2>/dev/null > $D/status.n
+		echo "$kv" >> $D/status.n
+		mv $D/status.n $D/status
+	done
+}
+getst() { sed -n "s/^$1=//p" $D/status 2>/dev/null | tail -1; }
+alive() { p=$(cat $D/pid 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+is_usb_mp() { # mountpoint is a writable USB mount under /mnt/usb
+	[ -n "$COLDSYNC_TEST_MP" ] && [ "$1" = "$COLDSYNC_TEST_MP" ] && return 0
+	case "$1" in /mnt/usb/*) ;; *) return 1 ;; esac
+	dev=$(awk -v m="$1" '$2 == m { print $1; exit }' /proc/mounts)
+	[ -n "$dev" ] || return 1
+	readlink -f "/sys/class/block/${dev#/dev/}" | grep -q '/usb[0-9]*/' || return 1
+	awk -v m="$1" '$2 == m { exit ($4 ~ /^ro(,|$)/) ? 1 : 0 }' /proc/mounts
+}
+fstype_of() { awk -v m="$1" '$2 == m { print $3; exit }' /proc/mounts; }
+
+flags() { # rsync flags for the drive's filesystem
+	case "$(fstype_of "$1")" in
+		ext2|ext3|ext4) echo "-aH" ;;                 # keeps permissions, owners, links
+		*) echo "-rt --modify-window=1" ;;            # exFAT/NTFS/FAT32: no Unix owners; FAT keeps 2 s times
+	esac
+}
+
+# ---------------------------------------------------------------- the job (runs detached)
+
+job() { # job <phase>
+	phase=$1
+	mode=$(sed -n 1p $D/job); mp=$(sed -n 2p $D/job)
+	cancelled=0
+	trap 'cancelled=1' TERM INT
+
+	set --
+	while IFS= read -r f; do set -- "$@" "$DATA/$f"; done <<EOF
+$(sed -n '3,$p' $D/job)
+EOF
+
+	if ! is_usb_mp "$mp"; then
+		finish failed "The USB drive is no longer connected or is read-only."; return
+	fi
+	mkdir -p "$mp/$SUB" || { finish failed "Could not create the $SUB folder on the drive."; return; }
+
+	common="$(flags "$mp") --no-inc-recursive --stats --no-human-readable --exclude=.recycle/ --partial-dir=.nas-partial"
+	del=""; [ "$mode" = sync ] && del="--delete"
+
+	if [ "$phase" = check ]; then
+		setst phase=checking scanned=0 checking_since=$(date +%s)
+		: > $D/deletes; : > $D/err
+		# shellcheck disable=SC2086
+		nice -n 10 rsync $common $del -n --info=del1,flist2,progress0 "$@" "$mp/$SUB/" 2>$D/err | tr '\r' '\n' | awk -v d=$D '
+			/^ *[0-9]+ files\.\.\./ { n = $1; t = systime(); if (t != last) { print n > (d "/scanned"); close(d "/scanned"); last = t }; next }
+			/^deleting / { print substr($0, 10) >> (d "/deletes"); next }
+			/^Number of |^Total / { print > (d "/plan") }'
+		rc=$(rsync_rc)
+		[ $cancelled = 1 ] && { finish cancelled "Stopped before copying."; return; }
+		case $rc in 0|23|24) ;; *) finish failed "$(why $rc)"; return ;; esac
+
+		bytes=$(sed -n 's/^Total transferred file size: \([0-9]*\).*/\1/p' $D/plan)
+		files=$(sed -n 's/^Number of regular files transferred: \([0-9]*\).*/\1/p' $D/plan)
+		total=$(sed -n 's/^Number of files: \([0-9]*\).*/\1/p' $D/plan)
+		dels=$(wc -l < $D/deletes)
+		setst plan_bytes=${bytes:-0} plan_files=${files:-0} plan_total=${total:-0} plan_deletes=$dels
+		# Copy never frees space: stop now instead of hours later. (Sync may free space by
+		# deleting, so it is left to rsync.) awk: sizes above 2^31 are safe there.
+		free=$(df -k "$mp" | awk 'NR == 2 { print $4 }')
+		if [ "$mode" = copy ] && awk -v b="${bytes:-0}" -v f="${free:-0}" 'BEGIN { exit !(b > f * 1024) }'; then
+			finish failed "Not enough space: this copy needs $(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1e9 }') GB, the drive has $(awk -v f="$free" 'BEGIN { printf "%.1f", f * 1024 / 1e9 }') GB free."
+			return
+		fi
+		if [ "$mode" = sync ] && [ "$dels" -gt 0 ]; then
+			setst phase=confirm
+			rm -f $D/pid
+			log "sync to $mp needs confirmation: $dels deletion(s)"
+			return
+		fi
+		phase=copy
+	fi
+
+	# ---- copy
+	setst phase=copying copy_since=$(date +%s)
+	: > $D/err; rm -f $D/progress $D/stats $D/scanned
+	# shellcheck disable=SC2086
+	nice -n 10 rsync $common $del --info=flist2,progress2 "$@" "$mp/$SUB/" 2>$D/err | tr '\r' '\n' | awk -v d=$D '
+		/^ *[0-9]+ files\.\.\./ { n = $1; t = systime(); if (t != ls) { print n > (d "/scanned"); close(d "/scanned"); ls = t }; next }
+		/to-chk=|^ *[0-9]+ +[0-9]+%/ {
+			# xfr#N only appears on the line printed when a file finishes: keep the last count
+			b = $1
+			if (match($0, /xfr#[0-9]+/)) x = substr($0, RSTART + 4, RLENGTH - 4) + 0
+			t = systime()
+			if (!t0) { t0 = t; b0 = b; start = t; rate = 0 }
+			if (t - t0 >= 10) { rate = (b - b0) / (t - t0); t0 = t; b0 = b }
+			else if (!rate && t > start) rate = b / (t - start)
+			# %.0f, not %d: busybox awk clamps %d to 2^31-1 (2 GB)
+			if (t != last) { printf "%.0f %.0f %.0f\n", b, x, rate > (d "/progress"); close(d "/progress"); last = t }
+			lb = b; lx = x; next
+		}
+		/^Number of |^Total / { print > (d "/stats") }
+		END { if (lb != "") { printf "%.0f %.0f %.0f\n", lb, lx, rate > (d "/progress"); close(d "/progress") } }'
+	rc=$(rsync_rc)
+	if [ $cancelled = 1 ]; then finish cancelled "Stopped by you. What was already copied stays on the drive."; return; fi
+	case $rc in
+		0)     finish done "" ;;
+		23|24) finish warn "$(grep -vc '^rsync ' $D/err) item(s) could not be copied." ;;
+		*)     finish failed "$(why $rc)" ;;
+	esac
+}
+
+# exit status of rsync in the pipeline above: busybox sh has no PIPESTATUS, so read it from err
+rsync_rc() {
+	c=$(sed -n 's/.*(code \([0-9]*\)).*/\1/p' $D/err | tail -1)
+	echo "${c:-0}"
+}
+
+why() {
+	if grep -q 'No space left on device' $D/err; then echo "The USB drive is full."
+	elif grep -qE 'Input/output error|No such device|Read-only file system' $D/err || ! is_usb_mp "$mp"; then
+		echo "The USB drive was removed or stopped responding."
+	else echo "rsync stopped with code $1: $(grep -v '^rsync ' $D/err | tail -1 | cut -c1-200)"
+	fi
+}
+
+finish() { # finish <done|warn|failed|cancelled> <message>
+	now=$(date +%s)
+	copied=$(sed -n 's/^Total transferred file size: \([0-9]*\).*/\1/p' $D/stats 2>/dev/null)
+	nfiles=$(sed -n 's/^Number of regular files transferred: \([0-9]*\).*/\1/p' $D/stats 2>/dev/null)
+	ndel=$(sed -n 's/^Number of deleted files: \([0-9]*\).*/\1/p' $D/stats 2>/dev/null)
+	setst phase=$1 message="$2" finished=$now
+	rm -f $D/pid
+	label=$(basename "$mp")
+	{
+		echo "result=$1"; echo "message=$2"; echo "finished=$now"; echo "started=$(getst started)"
+		echo "mode=$mode"; echo "drive=$label"; echo "folders=$(sed -n '3,$p' $D/job | tr '\n' '|' | sed 's/|$//')"
+		echo "copied=${copied:-0}"; echo "files=${nfiles:-0}"; echo "deleted=${ndel:-0}"
+	} > $LAST.n && mv $LAST.n $LAST
+	log "$mode to $mp: $1 ${2:+($2)} files=${nfiles:-0} bytes=${copied:-0} deleted=${ndel:-0}"
+
+	[ "$1" = cancelled ] && return
+	dur=$(( now - $(getst started) ))
+	h=$((dur / 3600)); m=$((dur % 3600 / 60))
+	case $1 in
+		done)   subj="Cold storage $mode finished" ;;
+		warn)   subj="Cold storage $mode finished with problems" ;;
+		failed) subj="Cold storage $mode FAILED" ;;
+	esac
+	body="Drive: $label\nFolders: $(sed -n '3,$p' $D/job | tr '\n' ',' | sed 's/,$//; s/,/, /g')\nTime: ${h}h ${m}m\nFiles copied: ${nfiles:-0} ($(( ${copied:-0} / 1000000 )) MB)"
+	[ "$mode" = sync ] && body="$body\nFiles deleted from the drive: ${ndel:-0}"
+	[ -n "$2" ] && body="$body\n\n$2"
+	[ "$1" = warn ] && body="$body\n\nFirst problems:\n$(grep -v '^rsync ' $D/err | head -10)"
+	[ "$1" != failed ] && body="$body\n\nEject the drive on the dashboard before unplugging it."
+	[ -n "$COLDSYNC_NOMAIL" ] || /usr/sbin/nas-alert send "coldsync_$now" "$subj" "$body" 0 >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- commands
+
+case "$1" in
+	start)
+		mode=$2; mp=$3; shift 3
+		case "$mode" in copy|sync) ;; *) echo "Unknown mode." >&2; exit 1 ;; esac
+		alive && { echo "A copy is already running." >&2; exit 1; }
+		is_usb_mp "$mp" || { echo "That is not a writable USB drive." >&2; exit 1; }
+		[ $# -gt 0 ] || { echo "Choose at least one folder." >&2; exit 1; }
+		for f in "$@"; do
+			echo "$f" | grep -qE '^[A-Za-z0-9][A-Za-z0-9_. -]{0,63}$' && ! echo "$f" | grep -q '\.\.' && [ -d "$DATA/$f" ] ||
+				{ echo "Unknown folder: $f" >&2; exit 1; }
+		done
+		{ echo "$mode"; echo "$mp"; for f in "$@"; do echo "$f"; done; } > $D/job
+		rm -f $D/status $D/plan $D/stats $D/progress $D/deletes $D/scanned $D/err
+		setst started=$(date +%s)
+		setsid "$0" _job check </dev/null >/dev/null 2>&1 &
+		echo $! > $D/pid
+		log "$mode to $mp started: $*"
+		;;
+	confirm)
+		alive && { echo "A copy is already running." >&2; exit 1; }
+		[ "$(getst phase)" = confirm ] || { echo "Nothing is waiting for confirmation." >&2; exit 1; }
+		setsid "$0" _job copy </dev/null >/dev/null 2>&1 &
+		echo $! > $D/pid
+		;;
+	cancel)
+		if alive; then
+			p=$(cat $D/pid)
+			kill -TERM -"$p" 2>/dev/null || kill -TERM "$p"
+			i=0; while alive && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
+		elif [ "$(getst phase)" = confirm ]; then
+			mode=$(sed -n 1p $D/job); mp=$(sed -n 2p $D/job)
+			finish cancelled "Sync cancelled: nothing was copied or deleted."
+		fi
+		;;
+	running) alive ;;
+	uses)
+		[ -f $D/job ] || exit 1
+		ph=$(getst phase)
+		{ alive || [ "$ph" = confirm ]; } && [ "$(sed -n 2p $D/job)" = "$2" ]
+		;;
+	_job) job "$2" ;;
+	*) sed -n '2,12p' "$0" >&2; exit 1 ;;
+esac

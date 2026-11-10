@@ -1,0 +1,42 @@
+{
+	"luci-app-nas": {
+		"description": "Grant access to NAS management (users, shares, power, cold storage)",
+		"read": {
+			"ubus": {
+				"luci.nas": [
+					"overview",
+					"stats",
+					"users_list",
+					"shares_list",
+					"cold_status",
+					"cold_deletes"
+				]
+			},
+			"uci": [
+				"samba4",
+				"hd-idle",
+				"system"
+			]
+		},
+		"write": {
+			"ubus": {
+				"luci.nas": [
+					"user_add",
+					"user_passwd",
+					"user_del",
+					"share_save",
+					"share_delete",
+					"usb_eject",
+					"names_set",
+					"power",
+					"cold_start",
+					"cold_confirm",
+					"cold_cancel"
+				]
+			},
+			"uci": [
+				"samba4"
+			]
+		}
+	}
+}

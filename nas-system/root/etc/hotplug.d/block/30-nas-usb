@@ -1,0 +1,6 @@
+# Auto-mount and share USB drives (internal bays are ignored by nas-usb).
+[ -x /usr/sbin/nas-usb ] || exit 0
+case "$ACTION" in
+	add)    /usr/sbin/nas-usb add "$DEVNAME" ;;
+	remove) /usr/sbin/nas-usb remove "$DEVNAME" ;;
+esac

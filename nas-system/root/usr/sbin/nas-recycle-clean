@@ -1,0 +1,15 @@
+#!/bin/sh
+# nas-recycle-clean: empty recycle-bin files older than DAYS (default 30).
+# Runs weekly from cron. Deleted files land in <share>/.recycle (Samba vfs recycle,
+# enabled on every share except Time Machine).
+DAYS=${1:-30}
+n=0
+for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\([^.]*\)\.vfs_objects='.*recycle.*'$/\1/p"); do
+	p=$(uci -q get samba4.$sec.path)/.recycle
+	[ -d "$p" ] || continue
+	c=$(find "$p" -type f -mtime +$DAYS | wc -l)
+	find "$p" -type f -mtime +$DAYS -exec rm -f {} +
+	find "$p" -mindepth 1 -type d | sort -r | while read -r d; do rmdir "$d" 2>/dev/null; done
+	n=$((n + c))
+done
+logger -t nas-recycle "removed $n file(s) older than $DAYS days from recycle bins"

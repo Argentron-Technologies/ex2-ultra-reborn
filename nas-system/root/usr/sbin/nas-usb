@@ -1,0 +1,165 @@
+#!/bin/sh
+# nas-usb: mount USB drives and share them over SMB automatically.
+#
+#   nas-usb add <dev>       (hotplug) mount + share a USB partition
+#   nas-usb remove <dev>    (hotplug) drop share + unmount after unplug
+#   nas-usb eject <disk>    safely remove: unshare, unmount, power down the drive
+#   nas-usb scan            (boot) drop stale shares, mount + share what is plugged in
+#
+# Only devices attached over USB are ever touched; the internal SATA bays are
+# skipped by is_usb(), whatever is on them.
+
+BASE=/mnt/usb
+LOCK=/tmp/nas-usb.lock
+STATE=/tmp/nas-usb; mkdir -p $STATE
+
+log() { logger -t nas-usb "$*"; }
+is_usb() { readlink -f "/sys/class/block/$1" 2>/dev/null | grep -q '/usb[0-9]*/'; }
+binfo() { block info "/dev/$1" 2>/dev/null | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"; }
+mounted_at() { awk -v d="/dev/$1" '$1 == d { print $2; exit }' /proc/mounts; }
+nas_users() { awk -F: '$3 >= 1000 && $3 < 60000 && $7 == "/bin/false" { printf "%s ", $1 }' /etc/passwd; }
+reload_samba() { /etc/init.d/samba4 reload >/dev/null 2>&1; }
+
+clean_name() { # label -> safe folder/share name
+	echo "$1" | tr -c 'A-Za-z0-9._-' '_' | sed 's/__*/_/g; s/^[_.]*//; s/_*$//' | cut -c1-32
+}
+
+add() {
+	dev=$1; ro=""
+	is_usb "$dev" || return 0
+	[ -n "$(mounted_at "$dev")" ] && return 0
+	type=$(binfo "$dev" TYPE)
+	[ -n "$type" ] || return 0                       # whole disk with a partition table, or blank
+	label=$(binfo "$dev" LABEL)
+
+	case "$type" in
+		vfat)  opts="-t vfat -o rw,noatime,uid=0,gid=0,umask=000,iocharset=utf8,shortname=mixed" ;;
+		exfat) opts="-t exfat -o rw,noatime,uid=0,gid=0,umask=000,iocharset=utf8" ;;
+		ntfs)  opts="-t ntfs3 -o rw,noatime,uid=0,gid=0,umask=000,iocharset=utf8" ;;
+		ext2|ext3|ext4) opts="-t $type -o rw,noatime" ;;
+		*)     log "$dev: $type is not supported, not sharing"; echo "unsupported $type" > $STATE/$dev; return 0 ;;
+	esac
+
+	name=$(clean_name "$label"); [ -n "$name" ] || name="USB_$dev"
+	mp="$BASE/$name"
+	if [ -e "$mp" ] && grep -q " $mp " /proc/mounts; then name="${name}_$dev"; mp="$BASE/$name"; fi
+	mkdir -p "$mp"
+
+	# shellcheck disable=SC2086
+	if ! mount $opts "/dev/$dev" "$mp" 2>/dev/null; then
+		# dirty NTFS/exFAT (unplugged without eject) refuses rw: offer it read-only
+		# shellcheck disable=SC2086
+		if mount $(echo "$opts" | sed 's/-o rw,/-o ro,/') "/dev/$dev" "$mp" 2>/dev/null; then
+			log "$dev: mounted read-only (the drive needs a check on a computer)"
+			ro=1
+		else
+			rmdir "$mp" 2>/dev/null
+			log "$dev: could not mount ($type)"; echo "error $type" > $STATE/$dev
+			return 0
+		fi
+	fi
+	[ "$type" = ext2 ] || [ "$type" = ext3 ] || [ "$type" = ext4 ] && chmod 0777 "$mp"
+
+	sec="usb_$dev"; rov=no; [ -n "$ro" ] && rov=yes
+	uci -q delete samba4.$sec
+	uci batch <<-EOF
+		set samba4.$sec=sambashare
+		set samba4.$sec.name='$name'
+		set samba4.$sec.path='$mp'
+		set samba4.$sec.read_only='$rov'
+		set samba4.$sec.browseable='yes'
+		set samba4.$sec.guest_ok='no'
+		set samba4.$sec.force_root='1'
+		set samba4.$sec.create_mask='0666'
+		set samba4.$sec.dir_mask='0777'
+		set samba4.$sec.nas_usb='1'
+		set samba4.$sec.nas_usb_dev='$dev'
+	EOF
+	users=$(nas_users)
+	[ -n "$users" ] && uci set samba4.$sec.users="${users% }"
+	uci commit samba4
+	echo "ok${ro:+ ro}" > $STATE/$dev
+	reload_samba
+	log "$dev: $type \"$label\" mounted at $mp and shared as $name"
+}
+
+unshare() { # drop the share for one device; returns 0 if something changed
+	sec="usb_$1"
+	[ "$(uci -q get samba4.$sec)" = sambashare ] || return 1
+	uci delete samba4.$sec; uci commit samba4
+	return 0
+}
+
+umount_dev() {
+	mp=$(mounted_at "$1")
+	[ -n "$mp" ] || return 0
+	sync
+	umount "$mp" 2>/dev/null || { log "$1: busy, detaching lazily"; umount -l "$mp"; }
+	case "$mp" in $BASE/*) rmdir "$mp" 2>/dev/null ;; esac
+}
+
+remove() {
+	dev=$1
+	ch=0; unshare "$dev" && ch=1
+	umount_dev "$dev"
+	rm -f $STATE/$dev
+	[ $ch = 1 ] && reload_samba
+	log "$dev: removed"
+}
+
+parts_of() { # disk -> its partitions (or the disk itself if it has none)
+	p=$(ls -d /sys/block/$1/$1* 2>/dev/null | sed 's#.*/##')
+	echo "${p:-$1}"
+}
+
+eject() {
+	disk=$1
+	echo "$disk" | grep -qE '^sd[a-z]+$' || { echo "bad device" >&2; return 1; }
+	is_usb "$disk" || { echo "$disk is not a USB drive" >&2; return 1; }
+	for p in $(parts_of "$disk"); do
+		mp=$(mounted_at "$p")
+		[ -n "$mp" ] && /usr/sbin/nas-coldsync uses "$mp" 2>/dev/null &&
+			{ echo "A cold storage copy is using this drive. Cancel it first." >&2; return 1; }
+	done
+	ch=0
+	for p in $(parts_of "$disk"); do
+		unshare "$p" && ch=1
+	done
+	[ $ch = 1 ] && reload_samba
+	sleep 1
+	for p in $(parts_of "$disk"); do
+		umount_dev "$p"
+		mp=$(mounted_at "$p")
+		[ -n "$mp" ] && { echo "$p is still in use" >&2; return 1; }
+		rm -f $STATE/$p
+	done
+	sync
+	echo 1 > /sys/block/$disk/device/delete 2>/dev/null
+	log "$disk: ejected, safe to unplug"
+}
+
+scan() {
+	# shares left over from a drive removed while the NAS was off
+	ch=0
+	for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\(usb_[a-z0-9]*\)=sambashare$/\1/p"); do
+		dev=${sec#usb_}
+		if [ -z "$(mounted_at "$dev")" ]; then uci delete samba4.$sec; ch=1; fi
+	done
+	[ $ch = 1 ] && uci commit samba4 && reload_samba
+	for d in /sys/block/sd*; do
+		disk=${d##*/}
+		is_usb "$disk" || continue
+		for p in $(parts_of "$disk"); do add "$p"; done
+	done
+}
+
+lock $LOCK
+case "$1" in
+	add)    add "$2" ;;
+	remove) remove "$2" ;;
+	eject)  eject "$2"; rc=$? ;;
+	scan)   scan ;;
+	*)      echo "usage: nas-usb add|remove <dev> | eject <disk> | scan" >&2; rc=1 ;;
+esac
+lock -u $LOCK
+exit ${rc:-0}

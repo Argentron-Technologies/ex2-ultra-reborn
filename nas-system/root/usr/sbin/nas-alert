@@ -1,0 +1,97 @@
+#!/bin/sh
+# nas-alert: send NAS alert e-mails through msmtp.
+#   nas-alert send <key> <subject> <body> [repeat_hours]
+#       Sends unless the same <key> was sent within repeat_hours (default 6).
+#       Messages that cannot be sent are queued and retried by "flush".
+#   nas-alert clear <key>   forget a key so the next alert sends at once
+#   nas-alert flush         retry queued messages
+#   nas-alert test          send a test message now
+
+STATE=/tmp/nas-alert
+QUEUE=/etc/nas-alert.queue        # on flash: survives a reboot
+PASSFILE=/etc/nas-alert.pass
+mkdir -p "$STATE"
+
+cfg() { uci -q get nas-alert.main.$1; }
+
+write_rc() {
+	cat > /tmp/nas-alert.msmtprc <<RC
+defaults
+auth on
+tls on
+tls_starttls on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile /tmp/nas-alert.log
+timeout 20
+account nas
+host $(cfg smtp_host)
+port $(cfg smtp_port)
+from $(cfg from)
+user $(cfg smtp_user)
+passwordeval "cat $PASSFILE"
+account default : nas
+RC
+	chmod 600 /tmp/nas-alert.msmtprc
+}
+
+deliver() { # deliver <file>
+	[ -s "$PASSFILE" ] || { echo "nas-alert: no password in $PASSFILE" >&2; return 1; }
+	write_rc
+	msmtp -C /tmp/nas-alert.msmtprc -t < "$1"
+}
+
+compose() { # compose <subject> <body> -> path
+	f=$(mktemp /tmp/nas-alert.msg.XXXXXX)
+	host=$(cat /proc/sys/kernel/hostname)
+	{
+		echo "To: $(cfg to)"
+		echo "From: NAS $host <$(cfg from)>"
+		echo "Subject: [$host] $1"
+		echo "Date: $(date -R)"
+		echo "Content-Type: text/plain; charset=UTF-8"
+		echo
+		printf '%b\n' "$2"
+		echo
+		echo "--"
+		echo "$host ($(uci -q get network.lan.ipaddr || ip -4 -o addr show br-lan | awk '{print $4}' | cut -d/ -f1)) at $(date '+%Y-%m-%d %H:%M %Z')"
+		echo "Open http://$host.local/ to check."
+	} > "$f"
+	echo "$f"
+}
+
+queue_msg() { # queue_msg <file>
+	mkdir -p "$QUEUE"
+	mv "$1" "$QUEUE/$(date +%s).$$.msg"
+}
+
+flush() {
+	[ -d "$QUEUE" ] || return 0
+	for m in "$QUEUE"/*.msg; do
+		[ -f "$m" ] || continue
+		deliver "$m" && rm -f "$m" || return 1
+	done
+	rmdir "$QUEUE" 2>/dev/null
+	return 0
+}
+
+case "$1" in
+	send)
+		[ "$(cfg enabled)" = 1 ] || exit 0
+		key=$2 subj=$3 body=$4 hours=${5:-6}
+		now=$(date +%s)
+		last=$(cat "$STATE/$key" 2>/dev/null || echo 0)
+		[ $((now - last)) -lt $((hours * 3600)) ] && exit 0
+		echo "$now" > "$STATE/$key"
+		logger -t nas-alert "$subj"
+		msg=$(compose "$subj" "$body")
+		flush
+		deliver "$msg" && rm -f "$msg" || queue_msg "$msg"
+		;;
+	clear) rm -f "$STATE/$2" ;;
+	flush) flush ;;
+	test)
+		msg=$(compose "Test alert" "This is a test message from your NAS.\nIf you can read this, e-mail alerts work.")
+		if deliver "$msg"; then rm -f "$msg"; echo "Sent to $(cfg to)."; else echo "Sending failed, see /tmp/nas-alert.log"; rm -f "$msg"; exit 1; fi
+		;;
+	*) echo "usage: nas-alert send|clear|flush|test" >&2; exit 2 ;;
+esac

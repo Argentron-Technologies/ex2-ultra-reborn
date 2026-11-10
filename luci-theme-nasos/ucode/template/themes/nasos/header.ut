@@ -1,0 +1,119 @@
+{#
+ NAS OS theme for LuCI
+ Based on the LuCI Bootstrap theme header template:
+ Copyright 2008 Steven Barth <steven@midlink.org>
+ Copyright 2012 David Menting <david@nut-bolt.nl>
+ Copyright 2008-2022 Jo-Philipp Wich <jo@mein.io>
+ Licensed to the public under the Apache License 2.0.
+-#}
+
+{%
+	import { getuid, getspnam } from 'luci.core';
+	import { cursor } from 'uci';
+
+	const boardinfo = ubus.call('system', 'board');
+	let hostname = boardinfo?.hostname ?? '?';
+	/* display name set on the NAS overview ("Change name"), falls back to the hostname */
+	const sysdesc = cursor().get_first('system', 'system', 'description');
+	if (sysdesc) hostname = sysdesc;
+	const model = boardinfo?.model ?? '';
+
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}" data-darkmode="false" data-accent="mint">
+	<head>
+		<meta charset="utf-8">
+		<title>{{ striptags(`${hostname}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`) }}</title>
+		<script>
+			/* Apply saved mode and accent before first paint. */
+			(function() {
+				var root = document.documentElement, store = {};
+				try { store.mode = localStorage.getItem('nasos.mode'); store.accent = localStorage.getItem('nasos.accent'); } catch (e) {}
+				var accents = ['mint', 'sky', 'coral', 'amber', 'rose', 'mono'];
+				root.setAttribute('data-accent', accents.indexOf(store.accent) > -1 ? store.accent : 'mint');
+				var mq = window.matchMedia('(prefers-color-scheme: dark)');
+				window.nasosApplyMode = function(mode) {
+					root.setAttribute('data-mode', mode || 'auto');
+					root.setAttribute('data-darkmode', String(mode === 'dark' || ((!mode || mode === 'auto') && mq.matches)));
+				};
+				mq.addEventListener('change', function() { window.nasosApplyMode(root.getAttribute('data-mode')); });
+				window.nasosApplyMode(store.mode);
+			})();
+		</script>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="darkreader-lock">
+		<link rel="stylesheet" href="{{ media }}/cascade.css?v={{ pkgs_update_time }}">
+		<link rel="stylesheet" media="only screen and (max-device-width: 854px)" href="{{ media }}/mobile.css?v={{ pkgs_update_time }}">
+		<link rel="stylesheet" href="{{ media }}/nasos.css?v={{ pkgs_update_time }}">
+		<link rel="icon" href="{{ media }}/logo.svg" sizes="any">
+		{% if (node?.css): %}
+		<link rel="stylesheet" href="{{ resource }}/{{ node.css }}">
+		{% endif %}
+		{% if (css): %}
+		<style title="text/css">{{ css }}</style>
+		{% endif %}
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+		<script src="{{ resource }}/cbi.js"></script>
+	</head>
+
+	<body class="lang_{{ dispatcher.lang }} {{ entityencode(striptags(node?.title ?? ''), true) }}{{ blank_page ? ' nos-blank' : '' }}" data-page="{{ entityencode(join('-', ctx.request_path), true) }}">
+		{% if (!blank_page): %}
+		<div id="nos-shell">
+			<aside id="nos-side" aria-label="{{ _('Main menu') }}">
+				<a class="nos-brand" href="/">
+					<span class="nos-logo" aria-hidden="true">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
+					</span>
+					<span class="nos-brand-text">
+						<b>{{ striptags(hostname) }}</b>
+						<small>{{ striptags(model) }}</small>
+					</span>
+				</a>
+				<nav id="nos-nav"></nav>
+				<ul id="modemenu" class="nos-modes" style="display:none"></ul>
+			</aside>
+			<div id="nos-scrim" hidden></div>
+
+			<div id="nos-main">
+				<header id="nos-top">
+					<button type="button" id="nos-menu-toggle" class="nos-iconbtn" aria-label="{{ _('Menu') }}">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+					</button>
+					<div id="nos-crumb"></div>
+					<div class="nos-spacer"></div>
+					<div id="indicators"></div>
+					<div id="nos-prefs"></div>
+				</header>
+
+				<div id="maincontent" class="container">
+					{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+						<div class="alert-message warning">
+							<h4>{{ _('No password set!') }}</h4>
+							<p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>
+							{% if (dispatcher.lookup("admin/system/admin")): %}
+							  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/admin") }}">{{ _('Go to password configuration...') }}</a></div>
+							{% endif %}
+						</div>
+					{% endif %}
+
+					{% if (boardinfo.rootfs_type == "initramfs"): %}
+						<div class="alert-message warning">
+							<h4>{{ _('System running in recovery (initramfs) mode.') }}</h4>
+							<p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p>
+							{% if (dispatcher.lookup("admin/system/flash")): %}
+							  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/flash") }}">{{ _('Go to firmware upgrade...') }}</a></div>
+							{% endif %}
+						</div>
+					{% endif %}
+
+					<noscript>
+						<div class="alert-message warning">
+							<h4>{{ _('JavaScript required!') }}</h4>
+							<p>{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</p>
+						</div>
+					</noscript>
+
+					<div id="tabmenu" style="display:none"></div>
+		{% endif %}

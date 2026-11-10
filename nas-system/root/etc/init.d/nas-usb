@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# At boot: drop shares of USB drives that are gone, share the ones plugged in.
+START=97
+
+boot() {
+	/usr/sbin/nas-usb scan
+}
+
+start() {
+	/usr/sbin/nas-usb scan
+}

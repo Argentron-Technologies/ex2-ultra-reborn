@@ -1,0 +1,156 @@
+#!/bin/sh
+# nas-fan: temperature-based fan control for the WD My Cloud EX2 Ultra on OpenWrt.
+#
+# Fan and power LED are driven by a microcontroller on /dev/ttyS1 (19200 8N1),
+# 7-byte frames FA .. FB (protocol from mcm-daemon / OpenWrt wiki).
+# Every INTERVAL seconds: read SoC temp + temps of disks that are spinning
+# (disks in standby are skipped so they are never woken), pick a fan level.
+# Safety: unreadable temperature -> full speed; service stop -> full speed + orange LED;
+# fan stall -> kick at full speed, red blinking LED if it stays stopped.
+
+TTY=/dev/ttyS1
+INTERVAL=30
+LEVELS="50 60 80 A0 C0 FF"      # stock fan: 50 ~ 2300 rpm, FF = full
+# WD's own rules for this model (/etc/wd/BVBZ-thermal.xml, WD fw 5.29.102), all in °C:
+#               one step faster if >   full speed if >   may slow down when ALL are <
+#   board              64                   73                   56
+#   processor          85                   90                   80   (user: never above 100; WD used 89/99)
+#   disks              59                   64                   56   (disks in standby count as cool)
+# Otherwise the speed is held. Starts at the lowest level.
+DOWN_CYCLES=10                   # slow down one step per 5 min of everything cool (WD: one step per 300 s)
+
+log() { logger -t nas-fan "$*"; }
+
+mcu() { # mcu "02 00 50 00 00" -> FA 02 00 50 00 00 FB
+	set -- $1
+	printf "\xFA\x$1\x$2\x$3\x$4\x$5\xFB" > "$TTY"
+}
+
+set_fan() { mcu "02 00 $1 00 00"; echo "$1" > /tmp/nas-fan.level; }
+set_led() { mcu "26 00 $1 00 01"; }   # 11 blue, 41 blue pulsing, 22 orange blink, 24 red blink
+
+fan_rpm() { # prints rpm, 0 if stopped, -1 if no answer
+	cat "$TTY" > /tmp/nas-fan.rx & p=$!
+	sleep 1; mcu "02 01 00 00 00"; sleep 1
+	kill $p 2>/dev/null; wait $p 2>/dev/null
+	set -- $(hexdump -v -e '1/1 "%02x "' /tmp/nas-fan.rx | grep -oE "fa 02 01 [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2} fb" | head -1)
+	[ $# -eq 7 ] || { echo -1; return; }
+	raw=$((0x$5$6))
+	[ "$raw" -eq 0 ] && echo 0 || echo $((300000 / raw))
+}
+
+# The MCU's board sensor reply (byte 6) is a RAW thermistor value, not °C:
+# higher raw = colder. WD converts it with this table (copied byte for byte from
+# WD firmware 5.29.102, /usr/sbin/up_read_daemon offset 0x2070): °C = table[raw].
+# raw 66-68 = 54-55 °C (WD's usual idle "system temperature"), raw 104 = 35 °C.
+BOARD_TABLE="116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 98 97 96 95 94 93 92 91 90 89 88 87 86 85 84 83 82 81 80 79 78 77 76 75 74 73 72 71 70 69 68 67 66 65 65 64 63 62 62 61 61 60 59 58 58 57 56 56 55 54 54 53 52 52 51 51 50 49 49 48 48 47 47 46 46 45 44 44 43 43 42 42 41 41 40 40 39 39 39 38 38 37 37 36 36 35 35 34 34 33 33 33 32 32 31 31 30 30 30 29 29 28 28 27 27 27 27 26 25 25 25 24 24 23 23 22 22 22 21 21 20 20 20 19 19 18 18 18 17 17 16 16 16 15 15 14 14 14 13 13 12 12 12 11 11 10 10 9 9 9 8 8 7 7 7 6 6 5 5 4 4 4 3 3 2 2 1 1 0 0"
+
+board_temp() { # board sensor in the MCU (what WD called system temperature), in °C; empty if no answer
+	cat "$TTY" > /tmp/nas-fan.brx & p=$!
+	sleep 1; mcu "03 08 00 00 00"; sleep 1
+	kill $p 2>/dev/null; wait $p 2>/dev/null
+	set -- $(hexdump -v -e '1/1 "%02x "' /tmp/nas-fan.brx | grep -oE "fa 03 08 [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2} fb" | head -1)
+	[ $# -eq 7 ] || return
+	raw=$((0x$6)); echo "$raw" > /tmp/nas-fan.board_raw
+	[ "$raw" -gt 187 ] && raw=187   # past the end of WD's table = 0 °C or colder
+	echo $BOARD_TABLE | cut -d' ' -f$((raw + 1))
+}
+
+level_for() { # level_for <temp> "<steps>"
+	i=1
+	for th in $2; do [ "$1" -le "$th" ] && break; i=$((i + 1)); done
+	echo $LEVELS | cut -d' ' -f$i
+}
+
+disk_temp_max() { # max temp of spinning disks; empty if none spinning; ERR if unreadable
+	max=""
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat $h/name 2>/dev/null)" = drivetemp ] || continue
+		blk=$(ls $h/device/block 2>/dev/null | head -1)
+		[ -n "$blk" ] && hdparm -C /dev/$blk 2>/dev/null | grep -q standby && continue
+		t=$(cat $h/temp1_input 2>/dev/null) || { echo ERR; return; }
+		[ -n "$t" ] || { echo ERR; return; }
+		t=$((t / 1000))
+		{ [ -z "$max" ] || [ "$t" -gt "$max" ]; } && max=$t
+	done
+	echo "$max"
+}
+
+fan_action() { # prints MAX, UP, DOWN or HOLD (WD's rules, see top)
+	# full speed while the RAID is rebuilding or checking (both disks busy for hours)
+	case "$(cat /sys/block/md1/md/sync_action 2>/dev/null)" in recover|resync|check|repair) echo MAX; return ;; esac
+	s=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+	d=$(disk_temp_max)
+	if [ -z "$s" ] || [ "$d" = ERR ]; then
+		echo MAX; return
+	fi
+	s=$((s / 1000))
+	b=$(board_temp); echo "${b:-?}" > /tmp/nas-fan.board
+	echo "soc=${s}C board=${b:-?}C disk=${d:-standby}C" > /tmp/nas-fan.status
+	[ -n "$b" ] || { echo MAX; return; }   # board sensor not answering: be safe
+	dd=${d:-0}
+	if [ "$b" -gt 73 ] || [ "$s" -gt 90 ] || [ "$dd" -gt 64 ]; then echo MAX
+	elif [ "$b" -gt 64 ] || [ "$s" -gt 85 ] || [ "$dd" -gt 59 ]; then echo UP
+	elif [ "$b" -lt 56 ] && [ "$s" -lt 80 ] && [ "$dd" -lt 56 ]; then echo DOWN
+	else echo HOLD
+	fi
+}
+
+step() { # step <level> <+1|-1> -> neighbouring level in LEVELS
+	i=1
+	for l in $LEVELS; do [ "$l" = "$1" ] && break; i=$((i + 1)); done
+	i=$((i + $2)); [ $i -lt 1 ] && i=1; [ $i -gt 6 ] && i=6
+	echo $LEVELS | cut -d' ' -f$i
+}
+
+stty -F "$TTY" 19200 raw -echo -crtscts cs8 -cstopb -parenb || { log "cannot open $TTY"; exit 1; }
+on_term() {
+	if [ -f /tmp/nas-fan.shutdown ]; then
+		# system shutdown/poweroff: quiet fan, power LED off = safe to unplug
+		set_fan 50; set_led 01; log "system shutdown: fan low, power LED off"
+	else
+		# service stopped or crashed: be safe and loud
+		set_fan FF; set_led 22; log "stopped: fan at full speed"
+	fi
+	exit 0
+}
+trap on_term TERM INT
+
+mcu "03 01 00 00 00"   # device ready: power LED stops blinking
+set_led 11
+case "$(fan_action)" in MAX) cur=FF ;; UP) cur=60 ;; *) cur=50 ;; esac
+set_fan "$cur"
+log "started, fan level $cur ($(cat /tmp/nas-fan.status 2>/dev/null))"
+(sleep 8; r=$(fan_rpm); echo "$r" > /tmp/nas-fan.rpm) &   # show the speed right away, not after 5 min
+
+lower=0
+n=0
+while :; do
+	sleep "$INTERVAL" & wait $!   # interruptible, so the TERM trap runs at once
+	a=$(fan_action)
+	new=$cur
+	case "$a" in
+		MAX) new=FF; lower=0 ;;
+		UP) new=$(step "$cur" 1); lower=0 ;;
+		DOWN) lower=$((lower + 1))
+		      [ "$lower" -ge "$DOWN_CYCLES" ] && { new=$(step "$cur" -1); lower=0; } ;;
+		*) lower=0 ;;
+	esac
+	[ "$new" != "$cur" ] && log "fan $cur -> $new ($a: $(cat /tmp/nas-fan.status 2>/dev/null))"
+	cur=$new
+	set_fan "$cur"
+
+	n=$((n + 1))
+	if [ $((n % 10)) -eq 0 ]; then   # every 5 min: make sure the fan really spins
+		r=$(fan_rpm)
+		echo "$r" > /tmp/nas-fan.rpm
+		if [ "$r" = 0 ]; then
+			log "fan stopped at level $cur, kicking at full speed"
+			set_fan FF; sleep 5; set_fan "$cur"; sleep 3
+			if [ "$(fan_rpm)" = 0 ]; then
+				log "fan still not spinning: staying at full speed"
+				cur=FF; set_fan FF; set_led 24
+			fi
+		fi
+	fi
+done
