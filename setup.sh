@@ -79,6 +79,7 @@ guard() {
 		echo "board=$(cat /tmp/sysinfo/board_name 2>/dev/null)"
 		echo "compat=$( { tr "\0" " " < /proc/device-tree/compatible; } 2>/dev/null)"
 		echo "model=$( { tr -d "\0" < /proc/device-tree/model; } 2>/dev/null)"
+		echo "sysmodel=$(cat /tmp/sysinfo/model 2>/dev/null)"
 		. /etc/openwrt_release 2>/dev/null; echo "target=$DISTRIB_TARGET"
 		echo "mcu=$([ -c /dev/ttyS1 ] && echo yes)"
 		echo "apk=$(command -v apk >/dev/null && echo yes)"')
@@ -94,7 +95,10 @@ guard() {
 	[ "$(val mcu)" = yes ] || bad="$bad\n  no /dev/ttyS1 (the fan and power microcontroller)"
 	if [ -n "$bad" ]; then
 		trap - EXIT
-		printf 'STOP: %s is not a WD My Cloud EX2 Ultra running OpenWrt:%b\nThese scripts are only for that model. Nothing was changed.\n' "$NAS" "$bad" >&2
+		# name the device by its model: with NAS=local (Windows) $NAS is just the word "local"
+		if [ "$NAS" = local ]; then at="This device"; else at="The device at $NAS"; fi
+		printf 'STOP: %s (%s) is not a WD My Cloud EX2 Ultra running OpenWrt:%b\nThese scripts are only for that model. Nothing was changed.\n' \
+			"$at" "$(val sysmodel | grep . || echo 'unknown model')" "$bad" >&2
 		exit 1
 	fi
 	[ "$(val apk)" = yes ] || die "this setup expects OpenWrt 25.12 or newer (apk package manager)."
@@ -120,7 +124,13 @@ cmd_check() {
 
 cmd_packages() {
 	say "installing packages (a few minutes)"
-	on "apk update && apk add $(echo $PACKAGES)"
+	# A first install on a fresh NAS sometimes ends with "1 error" although every package got
+	# installed (seen in a test VM; Avahi's start also fails there until D-Bus is reloaded).
+	# So reload D-Bus and run apk once more; only a second failure stops the step.
+	on "apk update && { apk add $(echo $PACKAGES) || {
+		echo '(a package setup script failed on the first try; reloading D-Bus and retrying)'
+		kill -HUP \$(pidof dbus-daemon) 2>/dev/null; sleep 2
+		apk add $(echo $PACKAGES); }; }"
 	# mdadm: NOT with its install scripts. On this NAS they start mdadm --assemble --scan over
 	# every block device, including the raw NAND flash; the OpenWrt wiki reports two reboots and
 	# 0-byte files from that. So: install with --no-scripts, limit mdadm to the SATA disks first,
@@ -202,6 +212,8 @@ cmd_code() {
 		chmod 755 /usr/sbin/nas-* /etc/init.d/nas-* &&
 		for s in nas-datamount nas-fan nas-watch nas-usb nas-poweroff; do /etc/init.d/$s enable; done'
 	on '[ -f /etc/config/nas-alert ]' || (cd "$HERE/nas-system/root" && tar cf - etc/config/nas-alert) | on 'tar xf - -C /'
+	# installs from Windows before the fix in setup.ps1 left this file world-writable
+	on 'chmod 644 /etc/config/nas-alert'
 
 	say "dashboard (luci-app-nas)"
 	(cd "$HERE/luci-app-nas/htdocs/luci-static/resources" && tar cf - nas view/nas) | on 'tar xf - -C /www/luci-static/resources'
@@ -277,7 +289,7 @@ CR
 
 	cmd_restart
 	echo
-	if [ "$NAS" = local ]; then echo "Done. Reboot the NAS once (setup.ps1 asks you)."
+	if [ "$NAS" = local ]; then echo "Done. Reboot the NAS once (you are asked next)."
 	else echo "Done. Reboot the NAS once:  ssh $NAS reboot"; fi
 	echo "Then open http://$host.local, sign in as root, set your time zone (System), and create users and shares on the NAS pages."
 }

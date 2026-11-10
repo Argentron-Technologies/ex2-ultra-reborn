@@ -34,6 +34,28 @@ function Stop-Setup([string]$Message) {
 	exit 1
 }
 
+# True when ssh refuses the NAS because its host key changed. That is expected once, right
+# after OpenWrt replaced the WD firmware (preflight-wd.cmd saved WD's key for the same address).
+function Test-HostKeyChanged([string]$Target) {
+	$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # PS 5.1: stderr must not throw
+	$out = (& ssh -o BatchMode=yes -o ConnectTimeout=8 $Target true 2>&1 | Out-String)
+	$ErrorActionPreference = $eap
+	return ($out -match 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed')
+}
+
+# Forget the saved host key of the NAS (in the known_hosts file(s) ssh actually uses for it).
+function Remove-OldHostKey([string]$Target) {
+	$cfg = & ssh -G $Target
+	$hostName = ($cfg | Where-Object { $_ -like 'hostname *' } | Select-Object -First 1).Substring(9)
+	$port = ($cfg | Where-Object { $_ -like 'port *' } | Select-Object -First 1).Substring(5)
+	$entry = if ($port -eq '22') { $hostName } else { "[${hostName}]:$port" }
+	$files = ($cfg | Where-Object { $_ -like 'userknownhostsfile *' } | Select-Object -First 1).Substring(19)
+	foreach ($m in [regex]::Matches($files, '(.+?known_hosts2?)(?=\s|$)')) {
+		$f = $m.Groups[1].Value.Trim()
+		if (Test-Path $f) { & ssh-keygen -R $entry -f $f | Out-Null }
+	}
+}
+
 if (-not $Command) {
 	Get-Help $PSCommandPath -Detailed | Out-Host
 	exit 1
@@ -58,6 +80,14 @@ if ($Command -eq 'key') {
 		& ssh-keygen -t ed25519 -f (Join-Path $sshDir 'id_ed25519')
 		if ($LASTEXITCODE -ne 0 -or -not (Test-Path $pub)) { Stop-Setup 'could not create an SSH key.' }
 	}
+	if (Test-HostKeyChanged $Nas) {
+		Write-Host "The NAS at $Nas has a different SSH identity than the one saved on this PC." -ForegroundColor Yellow
+		Write-Host 'That is normal right after installing OpenWrt on it (WD firmware had its own key).'
+		Write-Host 'If you did NOT just reinstall the NAS, answer N: something else may be answering at that address.'
+		$answer = Read-Host 'Did you just install OpenWrt on this NAS? Forget the old identity? [y/N]'
+		if ($answer -notmatch '^[yY]') { Stop-Setup 'stopped; the saved identity was kept.' }
+		Remove-OldHostKey $Nas
+	}
 	Write-Host "== adding your key to $Nas (type the NAS root password when asked)"
 	$key = (Get-Content -Raw $pub).Trim()
 	if ($key -notmatch '^ssh-[a-z0-9-]+ [A-Za-z0-9+/=]+( [^'']*)?$') { Stop-Setup "unexpected key format in $pub" }
@@ -71,7 +101,10 @@ if ($Command -eq 'key') {
 
 # --- every other step: upload the repo to the NAS and run setup.sh there --------------
 & ssh -o BatchMode=yes -o ConnectTimeout=8 $Nas true
-if ($LASTEXITCODE -ne 0) { Stop-Setup "can't log in to $Nas with your SSH key. Run first:  .\setup.cmd key" }
+if ($LASTEXITCODE -ne 0) {
+	if (Test-HostKeyChanged $Nas) { Stop-Setup "the NAS's SSH identity changed (normal right after installing OpenWrt). Run:  .\setup.cmd key" }
+	Stop-Setup "can't log in to $Nas with your SSH key. Run first:  .\setup.cmd key"
+}
 
 $tarPath = Join-Path ([IO.Path]::GetTempPath()) 'ex2-ultra-reborn.tar'
 & tar -cf $tarPath -C $Repo setup.sh nas-system luci-app-nas luci-theme-nasos
@@ -88,8 +121,10 @@ if ($rc -ne 0) {
 Remove-Item $tarPath -ErrorAction SilentlyContinue
 if ($rc -ne 0) { Stop-Setup "could not copy the files to the NAS (scp exit code $rc)." }
 
-# -t gives setup.sh a terminal for its questions; files are removed from the NAS afterwards
-& ssh -t -o ConnectTimeout=8 $Nas "rm -rf /tmp/ex2rb; mkdir -p /tmp/ex2rb && tar -xf /tmp/ex2rb.tar -C /tmp/ex2rb && rm -f /tmp/ex2rb.tar && NAS=local sh /tmp/ex2rb/setup.sh $Command; rc=`$?; rm -rf /tmp/ex2rb /tmp/ex2rb.tar; exit `$rc"
+# -t gives setup.sh a terminal for its questions; files are removed from the NAS afterwards.
+# chmod: Windows tar stores every file as 0666 and every folder as 0777; without it, setup.sh
+# would install world-writable files (and make existing system folders world-writable).
+& ssh -t -o ConnectTimeout=8 $Nas "rm -rf /tmp/ex2rb; mkdir -p /tmp/ex2rb && tar -xf /tmp/ex2rb.tar -C /tmp/ex2rb && rm -f /tmp/ex2rb.tar && chmod -R go-w /tmp/ex2rb && NAS=local sh /tmp/ex2rb/setup.sh $Command; rc=`$?; rm -rf /tmp/ex2rb /tmp/ex2rb.tar; exit `$rc"
 $rc = $LASTEXITCODE
 if ($rc -ne 0) { exit $rc }
 
