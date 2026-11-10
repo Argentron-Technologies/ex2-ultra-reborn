@@ -1,94 +1,115 @@
-# Setup guide: from fresh OpenWrt to a working NAS
+# Setup guide
 
-Start here once OpenWrt is installed ([install guide](INSTALL-OPENWRT.md)) and you can
-`ssh root@<NAS IP>`. On Windows, run these commands in WSL: see [WINDOWS.md](WINDOWS.md).
+[← README](../README.md) · [Install OpenWrt](INSTALL-OPENWRT.md) · **Setup guide** · [Windows](WINDOWS.md) · [Maintenance](MAINTENANCE.md)
 
-> All screenshots are real output. Step 1 is from a real EX2 Ultra (addresses blurred). The
-> other steps were recorded on a test install whose two disks are laid out exactly like
-> WD's.
+Turn a freshly flashed EX2 Ultra into a working NAS in about 15 minutes. Your WD data mirror
+is reused as is: nothing is formatted.
 
+| You need | |
+|---|---|
+| The NAS | Running OpenWrt ([install guide](INSTALL-OPENWRT.md)), with internet access |
+| A computer | Mac, Linux or Windows 10/11, on the same network |
+| The NAS address | Its IP, from your router's device list |
+
+The commands are the same on every system: Mac and Linux use `./setup.sh`, Windows uses
+`.\setup.cmd` (in PowerShell or Command Prompt, in the repo folder).
+
+---
+
+## 1. Connect
+
+**Mac / Linux**
 ```sh
-export NAS=root@<NAS IP>      # or root@nas.local once the NAS has its name
-ssh-copy-id $NAS              # log in with your SSH key from now on
+export NAS=root@<NAS IP>
+ssh-copy-id $NAS              # asks for the NAS root password once
 ```
 
-## Step 1: check (read-only)
-
-```sh
-./setup.sh check
+**Windows**
+```powershell
+.\setup.cmd key -Nas <NAS IP>  # creates an SSH key if needed, asks for the root password once
 ```
 
-It confirms this is a WD My Cloud EX2 Ultra running OpenWrt, and lists the disks. RAID
-details appear once mdadm is installed in step 2.
+From here on, no more passwords.
+
+## 2. Check
+
+Read-only. It confirms this is a WD My Cloud EX2 Ultra on OpenWrt and lists the disks.
+
+```sh
+./setup.sh check              # Windows: .\setup.cmd check
+```
 
 ![setup.sh check](images/setup-1-check.png)
 
-## Step 2: install the packages
+> [!NOTE]
+> Taken on a finished NAS, so the RAID lines are already filled in. On a fresh install they
+> appear after the next step.
+
+## 3. Install packages
+
+Takes a few minutes. mdadm is installed without its install scripts, as the OpenWrt wiki
+advises for this NAS.
 
 ```sh
-./setup.sh packages
+./setup.sh packages           # Windows: .\setup.cmd packages
 ```
-
-This takes a few minutes, and the NAS needs internet access. mdadm is installed **without**
-its install scripts, as the OpenWrt wiki advises for this NAS.
 
 ![setup.sh packages](images/setup-2-packages.png)
 
-## Step 3: use your existing WD data mirror
+## 4. Reuse your WD data
+
+Finds WD's data mirror (partition 2 of both disks) and skips WD's swap arrays. It only
+changes two config files and never writes to the disks. Answer **`y`**.
 
 ```sh
-./setup.sh data
+./setup.sh data               # Windows: .\setup.cmd data
 ```
-
-It finds WD's data mirror (partition 2 of both disks) and skips WD's swap arrays. It
-changes two config files only, and never writes to the disks. Answer `y`.
 
 ![setup.sh data](images/setup-3-data.png)
 
-## Step 4: install the NAS software
+## 5. Install the NAS software
+
+Asks for a **local name** (`nas` → `nas.local`) and a **display name** (shown in Finder and
+on the dashboard). Then it installs the dashboard, theme, fan control, alerts and disk sleep.
 
 ```sh
-./setup.sh install
+./setup.sh install            # Windows: .\setup.cmd install (offers to reboot)
 ssh $NAS reboot
 ```
 
-It asks for a local name (`nas` → `nas.local`) and a display name (shown in Finder and on
-the dashboard), then installs fan control, alerts, the dashboard and the theme.
-
 ![setup.sh install](images/setup-4-install.png)
 
-## Step 5: after the reboot
-
-Optional check over SSH: the mirror is running on both disks (`[UU]`), the files are
-untouched, and the services are up.
+After the reboot, the mirror runs on both disks (`[UU]`), your files are untouched, and the
+services are up:
 
 ![after reboot](images/setup-5-after-reboot.png)
 
-## Step 6: the dashboard
+## 6. Create users and shares
 
-Open `http://nas.local` (or `http://<NAS IP>`) and sign in as `root`.
+Open **`http://nas.local`** (or `http://<NAS IP>`) and sign in as `root`.
 
-**Overview:** health at a glance. Mirror status, space, temperatures, fan, network, and
-Restart and Shut down buttons.
+| Page | What to do |
+|---|---|
+| **Users** | Add the people and devices that may connect. Their password is what they type on their Mac or PC. |
+| **Shares** | Pick folders to share and who may use them. Tick **Time Machine** on one share for Mac backups (optionally with a size cap). Other shares get a 30-day recycle bin. |
+| **Overview** | Health at a glance: mirror, space, temperatures, fan, network. Restart and Shut down are here. |
 
 ![Dashboard overview](images/dashboard-overview.png)
 
-**Users:** add the people (and devices) that may use the NAS. Each user's password is
-what they type on their Mac or PC when they connect.
+<table>
+<tr>
+<td><img src="images/dashboard-users.png" alt="Users page"></td>
+<td><img src="images/dashboard-shares.png" alt="Shares page"></td>
+</tr>
+</table>
 
-![Users page](images/dashboard-users.png)
+## 7. Connect your computers
 
-**Shares:** choose folders to share and who may use them. Tick **Time Machine** on one
-share for Mac backups, with an optional size cap. Every other share gets a 30-day recycle
-bin.
+| | |
+|---|---|
+| **Mac** | Finder → Network, or *Go → Connect to Server* → `smb://nas.local`. Time Machine: *System Settings → General → Time Machine → Add Backup Disk*. |
+| **Windows** | File Explorer → Network, or type `\\nas.local` in the address bar. See [Windows](WINDOWS.md). |
+| **E-mail alerts** | Optional: `./setup.sh alerts` (Windows: `.\setup.cmd alerts`) |
 
-![Shares page](images/dashboard-shares.png)
-
-## Step 7: connect
-
-- **Mac:** Finder → Network, or Go → Connect to Server → `smb://nas.local`. For Time
-  Machine: System Settings → General → Time Machine → Add Backup Disk.
-- **Windows:** File Explorer → Network, or `\\nas.local`. See [WINDOWS.md](WINDOWS.md).
-- **Optional:** e-mail alerts with `./setup.sh alerts`.
-
-Day-to-day care, health checks and troubleshooting: [MAINTENANCE.md](MAINTENANCE.md).
+**Done.** For day-to-day care, upgrades and troubleshooting, see
+**[Maintenance →](MAINTENANCE.md)**

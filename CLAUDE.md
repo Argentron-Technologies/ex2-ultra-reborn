@@ -17,6 +17,7 @@ Wake-on-LAN.
 | `luci-app-nas/` | dashboard: JS views in `htdocs/`, ucode rpcd backend `luci.nas` | NAS (`/www`, `/usr/share/rpcd`) |
 | `luci-theme-nasos/` | theme on top of LuCI Bootstrap (Apache 2.0) | NAS |
 | `mac/` | Wake-on-LAN helpers | user's Mac |
+| `setup.cmd`, `preflight-wd.cmd`, `windows/*.ps1` | Windows versions (PowerShell 5.1+ and 7) | user's Windows PC |
 | `docs/` | install guide, maintenance guide, screenshots | |
 
 ## Hard safety rules
@@ -70,6 +71,25 @@ mirror. Do not break these rules, even if asked to "just try something":
 - The device has no global IPv6 address on purpose (`network.lan6.disabled=1`). Samba
   listens on all addresses (`bind interfaces only = no`), because Macs try link-local IPv6
   first.
+
+## Windows scripts
+
+- `setup.ps1` doesn't duplicate any install logic. It uploads the repo with `scp` and runs
+  `setup.sh` **on the NAS** with `NAS=local`, so `on()` runs commands locally. Any change to
+  `setup.sh` must keep working in that mode: BusyBox ash, prompts from `/dev/tty` (it runs
+  under `ssh -t`).
+- **Never move binary data through PowerShell pipes or `Start-Process -RedirectStandard*`.**
+  Both treat the data as text and corrupt it (measured: 498,176 bytes sent, 500,193
+  arrived). Use `scp -O` (with a fallback to plain `scp` for Windows 10's OpenSSH 8.x), or
+  `cmd.exe` `>` / `<` redirection from a temporary `.cmd` file.
+- **No double quotes inside arguments to native programs.** Windows PowerShell 5.1 passes
+  them on incorrectly. Build remote commands without `"` (for example `tr -d '\042'`).
+- PowerShell doesn't expand `*` for native programs: use `(Get-ChildItem pattern).Name`.
+- Don't redirect a native command's stderr (`2>$null`) while `$ErrorActionPreference =
+  'Stop'`: PowerShell 5.1 turns it into a terminating error.
+- Keep `.cmd` and `.ps1` files with CRLF line endings (`.gitattributes`), everything else LF.
+- Test on macOS/Linux with PowerShell 7 (`brew install powershell`) against a VM. The `cmd.exe`
+  branch only runs on real Windows.
 
 ## Testing changes
 

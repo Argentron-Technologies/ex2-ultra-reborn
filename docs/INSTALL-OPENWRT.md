@@ -1,35 +1,54 @@
-# Installing OpenWrt on the WD My Cloud EX2 Ultra
+# Install OpenWrt
 
-These are the steps from the official OpenWrt device page, in the order I used them, with
-the checks from this repo added:
-**https://openwrt.org/toh/western_digital/mycloud_ex2_ultra**
-If that page and this guide ever disagree, trust the wiki: it's kept up to date.
+[← README](../README.md) · **Install OpenWrt** · [Setup guide](SETUP-GUIDE.md) · [Windows](WINDOWS.md) · [Maintenance](MAINTENANCE.md)
 
-You need a computer on the same network as the NAS: a Mac, a Linux PC, or a Windows PC
-with WSL ([WINDOWS.md](WINDOWS.md); on Windows, run every command below in Ubuntu). Flashing doesn't touch
-the disks or your data, but **back up anything irreplaceable first** anyway.
+Replace WD's firmware with OpenWrt. This takes about 30 minutes, and **your disks and data
+are not touched**. The steps follow the official
+[OpenWrt device page](https://openwrt.org/toh/western_digital/mycloud_ex2_ultra). If the
+two ever disagree, trust the wiki.
 
-## 1. Turn on SSH in the WD firmware
+| You need | |
+|---|---|
+| The NAS | WD My Cloud EX2 Ultra, still on WD firmware, connected to your network |
+| A computer | Mac, Linux or Windows 10/11, on the same network |
+| This repo | `git clone` it, or *Code → Download ZIP* on GitHub |
+| Optional | A 3.3 V USB-serial adapter, for recovery only |
 
-In the WD dashboard, turn on SSH (network settings) and set its password. The SSH user is
-`sshd`:
+> [!IMPORTANT]
+> Back up anything irreplaceable first. Flashing doesn't touch the disks, but you are
+> replacing the NAS's operating system.
 
-```sh
-ssh sshd@<NAS IP>
-```
+---
+
+## 1. Turn on SSH
+
+In the WD dashboard, turn on **SSH** (network settings) and set its password. The SSH user is
+`sshd`.
 
 ## 2. Check the model and back up the flash
 
-From the repo folder on your computer:
+Read-only. Continue only if it ends with **OK**.
 
+**Mac / Linux**
 ```sh
 ./preflight-wd.sh <NAS IP> --backup ./wd-flash-backup
 ```
 
-It only reads from the NAS. Continue only if it ends with **OK**. It checks for WD model
-number `BVBZ`, 2 drive bays, and this exact flash layout:
+**Windows** (PowerShell or Command Prompt, in the repo folder)
+```powershell
+.\preflight-wd.cmd <NAS IP> -Backup .\wd-flash-backup
+```
 
-| mtd | size | name (WD) | name (OpenWrt) |
+It checks for WD model number `BVBZ`, 2 drive bays and the exact EX2 Ultra flash layout,
+then saves all 8 flash partitions with SHA-256 checksums.
+
+> [!TIP]
+> Keep the `wd-flash-backup` folder somewhere safe. It's your only way back to WD firmware.
+
+<details>
+<summary>Flash layout it expects</summary>
+
+| mtd | Size | Name (WD) | Name (OpenWrt) |
 |---|---|---|---|
 | mtd0 | 5 MiB | U-Boot | U-Boot |
 | mtd1 | 5 MiB | uImage | kernel |
@@ -40,52 +59,65 @@ number `BVBZ`, 2 drive bays, and this exact flash layout:
 | mtd6 | 10 MiB | reserve1 | reserve1 |
 | mtd7 | 10 MiB | reserve2 | reserve2 |
 
-The backup folder holds all 8 partitions plus `SHA256SUMS`. Keep it safe: it's your only
-way back to WD firmware.
+</details>
 
-## 3. Download OpenWrt and check it
+## 3. Download OpenWrt
 
-Download four files for target **mvebu/cortexa9**, profile **wd_cloud-ex2-ultra**, from
-https://downloads.openwrt.org/releases/ (pick the newest 25.12.x, then
-`targets/mvebu/cortexa9/`), along with `sha256sums`:
+From [downloads.openwrt.org/releases](https://downloads.openwrt.org/releases/), open the
+newest **25.12.x** → `targets/mvebu/cortexa9/`, and download these four files plus
+`sha256sums` into an empty folder:
 
-| File | Used for |
+| File (ends with) | Used for |
 |---|---|
-| `…-wd_cloud-ex2-ultra-squashfs-uImage-factory.bin` | install: the kernel |
-| `…-wd_cloud-ex2-ultra-squashfs-image-cfs-factory.bin` | install: the system |
-| `…-wd_cloud-ex2-ultra-initramfs-kernel.bin` | recovery only (keep it) |
-| `…-wd_cloud-ex2-ultra-squashfs-sysupgrade.bin` | recovery only (keep it) |
+| `wd_cloud-ex2-ultra-squashfs-uImage-factory.bin` | Install: the kernel |
+| `wd_cloud-ex2-ultra-squashfs-image-cfs-factory.bin` | Install: the system |
+| `wd_cloud-ex2-ultra-initramfs-kernel.bin` | Recovery only, keep it |
+| `wd_cloud-ex2-ultra-squashfs-sysupgrade.bin` | Recovery only, keep it |
 
+Check them. Every file must say **OK**:
+
+**Mac / Linux**
 ```sh
-shasum -a 256 -c sha256sums --ignore-missing     # every file must say OK
+shasum -a 256 -c sha256sums --ignore-missing
 ```
 
-## 4. Copy the two factory images to the NAS
+**Windows** (PowerShell)
+```powershell
+Get-Content sha256sums | ForEach-Object {
+  $hash, $file = $_ -split " \*", 2
+  if (Test-Path $file) { "{0}  {1}" -f $(if ((Get-FileHash $file -Algorithm SHA256).Hash -eq $hash) { "OK " } else { "BAD" }), $file }
+}
+```
 
-Keep **only one OpenWrt version** in the download folder. The commands below use `*`
-patterns, and two versions would match two files.
+## 4. Copy the images to the NAS
 
+Keep **only one OpenWrt version** in the folder. Then:
+
+**Mac / Linux**
 ```sh
-ls *-uImage-factory.bin *-image-cfs-factory.bin      # must list exactly 2 files
+ls *-uImage-factory.bin *-image-cfs-factory.bin       # exactly 2 files
 scp -O *-uImage-factory.bin *-image-cfs-factory.bin sshd@<NAS IP>:/tmp/
 ```
 
-`-O` makes `scp` use the classic copy protocol. Since OpenSSH 9.0 (current macOS and Linux),
-plain `scp` uses SFTP, which the WD firmware may not offer.
-
-If `scp` still fails, this works with nothing but SSH. It keeps the original file names,
-which the flash commands in step 5 rely on:
-
-```sh
-for f in *-uImage-factory.bin *-image-cfs-factory.bin; do
-  ssh sshd@<NAS IP> "cat > /tmp/$f" < "$f"
-done
+**Windows** (PowerShell)
+```powershell
+$files = (Get-ChildItem *-uImage-factory.bin, *-image-cfs-factory.bin).Name
+$files                                                 # exactly 2 files
+scp -O $files sshd@<NAS IP>:/tmp/                      # Windows 10: leave out -O
 ```
 
-## 5. Flash (the step that changes the NAS)
+`-O` selects the classic copy protocol, which WD's firmware may need. Newer `scp` versions
+default to SFTP.
 
-On the NAS (`ssh sshd@<NAS IP>`), run exactly these commands, from the wiki:
+## 5. Flash
 
+> [!WARNING]
+> This is the step that changes the NAS. Run exactly these commands, from the wiki.
+
+```sh
+ssh sshd@<NAS IP>
+```
+Then, on the NAS:
 ```sh
 cd /tmp
 ls -l *-uImage-factory.bin *-image-cfs-factory.bin      # exactly 2 files, same sizes as on your computer
@@ -96,64 +128,55 @@ ubiformat /dev/mtd3 -f /tmp/*-image-cfs-factory.bin -y
 reboot
 ```
 
-> **Do not** attach or check the new UBI from the WD firmware afterwards (for example
-> `ubiattach -m 3`). The wiki reports that this made the first OpenWrt boot end in a reboot
-> loop. Just reboot.
-
-`mtd2` (uRamdisk) stays as it is: the OpenWrt kernel ignores it.
+> [!CAUTION]
+> Don't attach or check the new UBI from WD's firmware afterwards (for example
+> `ubiattach -m 3`). The wiki reports this causes a reboot loop on first boot. Just reboot.
 
 ## 6. First boot
 
-The first boot takes a few minutes. Find the NAS:
+The first boot takes a few minutes. The fan runs at full speed and the LED blinks until
+setup installs fan control. That's normal.
 
-- **It may come up as a DHCP client.** Mine did: it appeared in my router's client list with
-  a new address. Try `ssh root@<new IP>` (no password yet).
-- **It may come up as `192.168.1.1`** with its own DHCP server, which is the wiki's listed
-  default. If so, don't leave it on your home network, where it would clash with your router.
-  Connect it straight to your computer, give the computer `192.168.1.2`, and run
-  `ssh root@192.168.1.1`. Then switch it to a DHCP client:
+Find the new system:
+
+- **As a DHCP client** (most likely): it appears in your router's device list with a new
+  address. Try `ssh root@<new IP>`; there's no password yet.
+- **As `192.168.1.1`** (the wiki's listed default): unplug it from your home network so it
+  doesn't clash with your router. Connect it directly to your computer, give the computer
+  `192.168.1.2`, then:
   ```sh
+  ssh root@192.168.1.1
   uci set network.lan.proto=dhcp; uci delete network.lan.ipaddr; uci delete network.lan.netmask
   uci commit network; reboot
   ```
   Then plug it back into your home network.
 
-The fan runs at full speed and the power LED blinks until `setup.sh` installs fan control.
-That's loud but normal.
-
-Then set a root password and add your SSH key:
+Set a root password:
 
 ```sh
 ssh root@<NAS IP> passwd
-ssh-copy-id root@<NAS IP>
 ```
 
 Give the NAS a fixed address (a DHCP reservation on your router is easiest), then continue
-with the **[setup guide](SETUP-GUIDE.md)**.
+with the **[setup guide →](SETUP-GUIDE.md)**
 
-## If it doesn't boot (recovery)
+---
 
-As long as U-Boot (mtd0) is intact, the NAS can be recovered. All methods need a **3.3 V
-USB-serial adapter**:
+## Recovery
 
-- Connect it to header **JP2**: pin 1 = RX, pin 2 = GND, pin 5 = TX (cross TX/RX to the
-  adapter; leave 3.3 V unconnected), at 115200 baud.
-- U-Boot only stops on the key **1**, and you have 1 second.
+As long as U-Boot (mtd0) is intact, the NAS can always be recovered. You'll need a 3.3 V
+USB-serial adapter on header **JP2** (pin 1 RX, pin 2 GND, pin 5 TX; cross TX and RX; leave
+3.3 V unconnected) at **115200** baud. U-Boot only stops on key **`1`**, and you have 1 second.
 
-**USB stick (easiest):** put the `initramfs-kernel.bin` on a FAT32 USB 2.0 stick. Stop U-Boot,
-then:
+| Method | How |
+|---|---|
+| **USB stick** (easiest) | Put `initramfs-kernel.bin` on a FAT32 USB 2.0 stick. Stop U-Boot, then:<br>`usb start`<br>`fatload usb 0:1 0x02000000 openwrt-mvebu-cortexa9-wd_cloud-ex2-ultra-initramfs-kernel.bin;bootm 0x02000000 -` |
+| **Serial (YMODEM)** | No network or stick needed, but slow (~10 min): `loady 0x02000000`, send the initramfs, then `iminfo 0x02000000` and `bootm 0x02000000` |
+| **TFTP** | On the wiki, but on some units (U-Boot 2013.01 v1.04) U-Boot's network doesn't come up |
 
-```
-usb start
-fatload usb 0:1 0x02000000 openwrt-mvebu-cortexa9-wd_cloud-ex2-ultra-initramfs-kernel.bin;bootm 0x02000000 -
-```
+Once OpenWrt runs from RAM, copy the `sysupgrade.bin` to `/tmp` and run
+`sysupgrade -n /tmp/<file>`.
 
-Once that OpenWrt is running from RAM, copy the `sysupgrade.bin` to `/tmp` and run
-`sysupgrade -n /tmp/<file>` (this reformats the system UBI).
-Never put a file `/GrandTeton/u-boot.bin` on that stick: U-Boot can reflash itself from it.
-
-**Serial (YMODEM):** works with no network or stick, but it's slow (about 10 minutes):
-`loady 0x02000000`, send the initramfs file, then `iminfo 0x02000000` and `bootm 0x02000000`.
-
-**TFTP:** described on the wiki, but on some units (U-Boot 2013.01 v1.04) U-Boot's network
-doesn't come up. Use USB or serial instead.
+> [!CAUTION]
+> Never put a file named `/GrandTeton/u-boot.bin` on a USB stick you plug in: U-Boot can
+> reflash itself from it.

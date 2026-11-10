@@ -43,8 +43,9 @@ number `BVBZ` and flash layout before flashing, then the board and device tree o
 
 ## Getting started
 
-You need the NAS on your network, and a Mac, a Linux PC or a Windows PC with
-[WSL](docs/WINDOWS.md).
+You need the NAS on your network and a Mac, Linux or Windows computer. On Windows, use
+`.\preflight-wd.cmd` and `.\setup.cmd` in PowerShell or Command Prompt instead of the `.sh`
+scripts ([details](docs/WINDOWS.md)).
 
 **1. Check the model and back up the flash** (on WD firmware, read-only):
 
@@ -76,23 +77,24 @@ The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots
 |---|---|
 | [Install OpenWrt](docs/INSTALL-OPENWRT.md) | Flash backup, flashing over SSH, first boot, recovery |
 | [Setup guide](docs/SETUP-GUIDE.md) | `setup.sh` step by step, dashboard tour, connecting clients |
-| [Windows](docs/WINDOWS.md) | Running the scripts in WSL, using the NAS from File Explorer |
+| [Windows](docs/WINDOWS.md) | The PowerShell / Command Prompt scripts, using the NAS from File Explorer |
 | [Maintenance](docs/MAINTENANCE.md) | Health checks, upgrades, disks and RAID, fan, troubleshooting |
 | [CLAUDE.md](CLAUDE.md) | Hardware notes, rules and how to add features (for contributors and AI assistants) |
 
 ## Project layout
 
 ```
-preflight-wd.sh      model check + flash backup, before flashing
-setup.sh             installer and updater, after flashing
+preflight-wd.sh      model check + flash backup, before flashing   (Windows: preflight-wd.cmd)
+setup.sh             installer and updater, after flashing         (Windows: setup.cmd)
 luci-app-nas/        dashboard pages and their backend
 luci-theme-nasos/    "NAS OS" theme (based on LuCI Bootstrap)
 nas-system/          fan control, alerts, power, RAID mount, USB, configs
-mac/                 Wake-on-LAN helpers (wake-nas also runs on Windows)
+mac/                 Wake-on-LAN helpers for Mac
+windows/             PowerShell scripts behind the .cmd launchers, Wake-on-LAN for Windows
 docs/                guides and screenshots
 ```
 
-Updates: edit, then `./setup.sh update`. OpenWrt upgrades go through
+Updates: edit, then `./setup.sh update` (Windows: `.\setup.cmd update`). OpenWrt upgrades go through
 **System → Attended Sysupgrade**, and everything installed here survives them.
 
 ## Safety
