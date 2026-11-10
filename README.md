@@ -1,109 +1,116 @@
+<div align="center">
+
 # EX2 Ultra Reborn
 
-**A WD My Cloud EX2 Ultra on OpenWrt: a quiet, simple NAS that outlives WD support.**
+**Turn a WD My Cloud EX2 Ultra into a quiet, simple, up-to-date NAS on OpenWrt.**
 
-![NAS dashboard](docs/images/dashboard-overview.png)
+[![OpenWrt 25.12+](https://img.shields.io/badge/OpenWrt-25.12%2B-00a3e0)](https://openwrt.org/toh/western_digital/mycloud_ex2_ultra) [![Device](https://img.shields.io/badge/device-WD%20My%20Cloud%20EX2%20Ultra-555)](#supported-hardware) [![License](https://img.shields.io/badge/license-Apache--2.0-3fbf93)](LICENSE)
 
-Scripts, a dashboard and a theme that turn a **WD My Cloud EX2 Ultra** running
-**OpenWrt 25.12** into a no-frills home NAS: SMB shares, Time Machine for Macs, disks that
-sleep, a fan that stays quiet, and e-mail alerts. Your existing WD data volume is kept as it is.
+[Getting started](#getting-started) · [Documentation](#documentation) · [Safety](#safety) · [License](#license)
 
-WD's firmware for this model is near the end of its support. OpenWrt supports the EX2 Ultra
-officially, gets security updates, and uses far less memory than WD's firmware.
+<img src="docs/images/dashboard-overview.png" alt="NAS OS dashboard" width="860">
 
-| Folder | What it is |
+</div>
+
+---
+
+WD's firmware for the EX2 Ultra is nearing the end of its support, but the hardware is fine.
+OpenWrt supports this NAS officially. This project adds what's missing to make it a
+complete home NAS: a clean dashboard, fan control, health alerts and a one-command
+installer. **Your existing data stays where it is.** WD's RAID 1 mirror is reused as is.
+
+## Features
+
+| Feature | What you get |
 |---|---|
-| `luci-theme-nasos/` | "NAS OS" LuCI theme: soft, borderless, NAS pages first, phone layout |
-| `luci-app-nas/` | NAS pages: overview dashboard, users, shares, USB drives, cold-storage copies, rename, shut down |
-| `nas-system/` | System side: fan control, health watch and e-mail alerts, overheat shutdown, real power-off with Wake-on-LAN, RAID mount at boot, USB auto-share, recycle-bin cleanup |
-| `mac/` | Optional Mac helpers: wake the NAS by Wake-on-LAN, auto-wake for Time Machine |
-| `preflight-wd.sh` | Run **before** flashing, on WD firmware: confirms the model, saves a flash backup (read-only) |
-| `setup.sh` | Installs all of it on the NAS over SSH, after flashing |
-| `CLAUDE.md` | Rules and conventions for working on this repo with Claude Code |
+| **File sharing** | SMB shares for Mac, Windows and Linux, with a 30-day recycle bin |
+| **Time Machine** | Mac backups with an optional size cap, discovered automatically |
+| **Simple dashboard** | Users, shares, disks, temperatures and network on one page; works on phones |
+| **Quiet fan** | WD's own temperature rules, decoded from the stock firmware |
+| **Disk care** | Disks sleep when idle, monthly RAID check, SMART monitoring |
+| **E-mail alerts** | Degraded RAID, failing or hot disk, full storage, stopped fan, unexpected restart |
+| **Power** | Real power-off, Wake-on-LAN, optional idle power-off, overheat shutdown |
+| **USB** | Drives are shared automatically; one-click copy or sync of folders to cold storage |
+| **Private by default** | No cloud, no public IPv6, nothing exposed to the internet |
 
-> **Only for the WD My Cloud EX2 Ultra.** Other WD models (Mirror Gen2, EX2100, EX4100,
-> PR2100, …) use different hardware, and the fan and power code talks to this model's
-> microcontroller. Both scripts refuse to run on anything else:
-> - `preflight-wd.sh` (on WD firmware) requires WD model number `BVBZ`, 2 drive bays and
->   the EX2 Ultra's exact 8-partition flash layout. The same WD firmware image also serves
->   the Mirror Gen2, so this check matters.
-> - `setup.sh` (on OpenWrt) requires all of: board `wd,cloud-ex2-ultra`, device tree
->   `wd,cloud-ex2-ultra` + `marvell,armada385`, model "WD MyCloud Ex2 Ultra", OpenWrt
->   target `mvebu/cortexa9`, and the microcontroller port `/dev/ttyS1`.
+## Supported hardware
 
-## What you get
+**WD My Cloud EX2 Ultra only**, with two disks in WD RAID 1.
 
-- **Shares and users** managed from simple pages (no Samba knowledge needed), with a
-  30-day recycle bin on every share except Time Machine.
-- **Time Machine** share with an optional size cap, advertised to Macs automatically.
-- **Quiet fan:** WD's own temperature rules, read from the stock firmware, in real °C.
-  Sleeping disks are never woken to read their temperature.
-- **Disk sleep** after 10 minutes (hd-idle), and a monthly RAID data check.
-- **Alerts by e-mail:** RAID degraded or rebuilt, disk hot or failing (SMART), storage full,
-  fan stopped, unexpected restart, network link down.
-- **Overheat protection:** shuts down cleanly if a disk, the board or the processor stays
-  too hot for 3 minutes.
-- **Real power-off** from the dashboard. The power is actually cut, like WD's firmware does,
-  and Wake-on-LAN turns it back on. An optional idle power-off can switch the NAS off after
-  N hours without use.
-- **USB drives** are shared automatically and ejected from the dashboard. **Cold storage**
-  copies or syncs chosen folders to a USB drive, with live progress.
-- **Not exposed to the internet:** no public IPv6 address, and no cloud service.
+Other WD models (Mirror Gen2, EX2100, EX4100, PR2100, …) use different hardware, so both
+scripts check the device before doing anything and refuse to run elsewhere: the WD model
+number `BVBZ` and flash layout before flashing, then the board and device tree on OpenWrt.
 
-## Quick start
+## Getting started
 
-1. **Check the model and back up the flash** while it still runs WD firmware (SSH on):
-   ```sh
-   ./preflight-wd.sh <NAS IP> --backup ./wd-flash-backup
-   ```
-   Continue only if it ends with "OK". Then **install OpenWrt**:
-   see [docs/INSTALL-OPENWRT.md](docs/INSTALL-OPENWRT.md).
-2. From a Mac, Linux PC, or Windows PC with WSL ([WINDOWS.md](docs/WINDOWS.md)) on the same network:
-   ```sh
-   ssh-copy-id root@<NAS IP>                         # set a root password first (passwd)
-   export NAS=root@<NAS IP>
-   ./setup.sh check        # read-only: model, disks, RAID
-   ./setup.sh packages     # needs internet on the NAS
-   ./setup.sh data         # use the existing WD mirror as /mnt/data (no disk writes)
-   ./setup.sh install      # asks for a name
-   ssh $NAS reboot
-   ./setup.sh alerts       # optional: e-mail alerts
-   ```
-3. Open `http://<name>.local`, sign in as `root`, and create users and shares on the NAS pages.
+You need the NAS on your network, and a Mac, a Linux PC or a Windows PC with
+[WSL](docs/WINDOWS.md).
 
-Step-by-step with screenshots: **[docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md)**.
-Using Windows? Run the same scripts in WSL: **[docs/WINDOWS.md](docs/WINDOWS.md)**.
+**1. Check the model and back up the flash** (on WD firmware, read-only):
 
-Later changes: edit the files, then `./setup.sh update`. Upgrade OpenWrt with
-**System → Attended Sysupgrade**. Everything installed here is listed in
-`/etc/sysupgrade.conf`, so it survives upgrades.
+```sh
+./preflight-wd.sh <NAS IP> --backup ./wd-flash-backup
+```
 
-More detail: [docs/MAINTENANCE.md](docs/MAINTENANCE.md) covers health checks, disks and
-RAID, the fan, and troubleshooting.
+**2. Install OpenWrt**: follow the [install guide](docs/INSTALL-OPENWRT.md).
 
-## Requirements and limits
+**3. Set up the NAS**:
 
-- WD My Cloud EX2 Ultra with **two disks in WD RAID 1** (the data mirror on partition 2 of
-  each disk). `setup.sh` never creates, formats or rebuilds arrays.
-- OpenWrt **25.12 or newer** (apk package manager). The scripts run daily on 25.12.6. The install steps were also tested end to end on a virtual machine with WD-style disks: the data mirror came up with files intact, and SMB, Time Machine discovery, users, shares and the recycle bin all worked. Please open an issue if a step fails for you.
-- Flash space is no issue: the full install uses about 22 MB of the NAS flash.
-- Sharing is SMB only. No NFS, media server, cloud access or apps; that's on purpose.
+```sh
+export NAS=root@<NAS IP>
+ssh-copy-id $NAS
 
-## Safety notes
+./setup.sh check        # read-only: model, disks, RAID
+./setup.sh packages     # install the required packages
+./setup.sh data         # reuse the WD data mirror (no disk writes)
+./setup.sh install      # dashboard, fan control, alerts, disk sleep
+ssh $NAS reboot
+```
 
-- **Never mount `sda2` or `sdb2` directly.** WD uses RAID superblock 1.0, so each member
-  looks like a normal ext4 disk. A direct mount silently splits the mirror. `setup.sh data`
-  turns off OpenWrt's automatic mounting of unknown partitions for this reason.
-- Nothing here sends firmware or setup commands to the microcontroller. The commands it uses
-  (fan speed, LED, temperature, Wake-on-LAN, power-off) are the ones WD's own firmware
-  sends: they were read from WD firmware 5.29.102.
-- Secrets are never stored in this repo: the SMTP password lives in `/etc/nas-alert.pass`
-  on the NAS only.
+Then open `http://nas.local` and create your users and shares.
+The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots.
+
+## Documentation
+
+| Guide | Contents |
+|---|---|
+| [Install OpenWrt](docs/INSTALL-OPENWRT.md) | Flash backup, flashing over SSH, first boot, recovery |
+| [Setup guide](docs/SETUP-GUIDE.md) | `setup.sh` step by step, dashboard tour, connecting clients |
+| [Windows](docs/WINDOWS.md) | Running the scripts in WSL, using the NAS from File Explorer |
+| [Maintenance](docs/MAINTENANCE.md) | Health checks, upgrades, disks and RAID, fan, troubleshooting |
+| [CLAUDE.md](CLAUDE.md) | Hardware notes, rules and how to add features (for contributors and AI assistants) |
+
+## Project layout
+
+```
+preflight-wd.sh      model check + flash backup, before flashing
+setup.sh             installer and updater, after flashing
+luci-app-nas/        dashboard pages and their backend
+luci-theme-nasos/    "NAS OS" theme (based on LuCI Bootstrap)
+nas-system/          fan control, alerts, power, RAID mount, USB, configs
+mac/                 Wake-on-LAN helpers (wake-nas also runs on Windows)
+docs/                guides and screenshots
+```
+
+Updates: edit, then `./setup.sh update`. OpenWrt upgrades go through
+**System → Attended Sysupgrade**, and everything installed here survives them.
+
+## Safety
+
+- **Back up first.** Copy anything irreplaceable off the NAS before flashing, and keep the
+  flash backup from `preflight-wd.sh`. It's your way back to WD firmware.
+- `setup.sh` never formats, creates or rebuilds RAID arrays, and never mounts a single RAID
+  disk on its own (that would silently split the mirror).
+- The microcontroller (fan and power) only receives the commands WD's own firmware sends.
+- No secrets live in this repo: the alert e-mail password stays on the NAS.
+
+Tested on OpenWrt 25.12.5 and 25.12.6. Found a problem?
+[Open an issue](https://github.com/Argentron-Technologies/ex2-ultra-reborn/issues).
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). The NAS OS theme is built on the
-[LuCI Bootstrap theme](https://github.com/openwrt/luci) (Apache 2.0): `cascade.css` and
-`mobile.css` are its unmodified stylesheets, and the header and footer templates are adapted
-from it. Not affiliated with Western Digital or OpenWrt.
-"My Cloud" is a trademark of Western Digital.
+[Apache License 2.0](LICENSE). The NAS OS theme builds on the
+[LuCI Bootstrap theme](https://github.com/openwrt/luci) (Apache 2.0).
+
+Not affiliated with Western Digital or the OpenWrt project. "My Cloud" is a trademark of
+Western Digital.
