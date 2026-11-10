@@ -6,7 +6,7 @@
 
 [![OpenWrt 25.12+](https://img.shields.io/badge/OpenWrt-25.12%2B-00a3e0)](https://openwrt.org/toh/western_digital/mycloud_ex2_ultra) [![Device](https://img.shields.io/badge/device-WD%20My%20Cloud%20EX2%20Ultra-555)](#supported-hardware) [![License](https://img.shields.io/badge/license-Apache--2.0-3fbf93)](LICENSE)
 
-[Getting started](#getting-started) · [Documentation](#documentation) · [Safety](#safety) · [License](#license)
+[Getting started](#getting-started) · [Documentation](#documentation) · [Safety](#safety) · [License](#license) · [argentrontech.com](https://argentrontech.com)
 
 <img src="docs/images/dashboard-overview.png" alt="NAS OS dashboard" width="860">
 
@@ -114,3 +114,11 @@ Tested on OpenWrt 25.12.5 and 25.12.6. Found a problem?
 
 Not affiliated with Western Digital or the OpenWrt project. "My Cloud" is a trademark of
 Western Digital.
+
+---
+
+<div align="center">
+
+Made by **[Argentron Technologies](https://argentrontech.com)**
+
+</div>
