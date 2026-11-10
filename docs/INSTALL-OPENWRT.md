@@ -114,6 +114,11 @@ default to SFTP.
 > [!WARNING]
 > This is the step that changes the NAS. Run exactly these commands, from the wiki.
 
+Only two of the eight flash parts are rewritten: the kernel (`mtd1`) and the system
+(`mtd3`). The bootloader, WD's rescue firmware, its settings and your disks stay as they are.
+
+<p align="center"><img src="images/flash-layout.svg" alt="What flashing changes: mtd1 kernel and mtd3 system are replaced; all other flash parts and the disks are untouched" width="760"></p>
+
 ```sh
 ssh sshd@<NAS IP>
 ```
