@@ -3,10 +3,9 @@
 Start here once OpenWrt is installed ([install guide](INSTALL-OPENWRT.md)) and you can
 `ssh root@<NAS IP>`. On Windows, run these commands in WSL: see [WINDOWS.md](WINDOWS.md).
 
-> The screenshots are real output, recorded on an OpenWrt test VM whose two disks are laid
-> out exactly like WD's (a RAID 1 data mirror on partition 2, holding some family files).
-> That's why they show "QEMU" hardware and the address `10.0.2.15`. On your NAS you'll see
-> the EX2 Ultra and your own network details.
+> All screenshots are real output. Step 1 is from a real EX2 Ultra (addresses blurred). The
+> other steps were recorded on a test install whose two disks are laid out exactly like
+> WD's.
 
 ```sh
 export NAS=root@<NAS IP>      # or root@nas.local once the NAS has its name
