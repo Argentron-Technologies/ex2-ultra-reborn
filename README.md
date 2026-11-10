@@ -2,6 +2,8 @@
 
 **A WD My Cloud EX2 Ultra on OpenWrt: a quiet, simple NAS that outlives WD support.**
 
+![NAS dashboard](docs/images/dashboard-overview.png)
+
 Scripts, a dashboard and a theme that turn a **WD My Cloud EX2 Ultra** running
 **OpenWrt 25.12** into a no-frills home NAS: SMB shares, Time Machine for Macs, disks that
 sleep, a fan that stays quiet, and e-mail alerts. Your existing WD data volume is kept as it is.
@@ -56,7 +58,7 @@ officially, gets security updates, and uses far less memory than WD's firmware.
    ```
    Continue only if it ends with "OK". Then **install OpenWrt**:
    see [docs/INSTALL-OPENWRT.md](docs/INSTALL-OPENWRT.md).
-2. From a Mac or Linux PC on the same network:
+2. From a Mac, Linux PC, or Windows PC with WSL ([WINDOWS.md](docs/WINDOWS.md)) on the same network:
    ```sh
    ssh-copy-id root@<NAS IP>                         # set a root password first (passwd)
    export NAS=root@<NAS IP>
@@ -69,34 +71,8 @@ officially, gets security updates, and uses far less memory than WD's firmware.
    ```
 3. Open `http://<name>.local`, sign in as `root`, and create users and shares on the NAS pages.
 
-<details>
-<summary><b>What each step looks like</b> (real output, recorded on a test VM with WD-style disks)</summary>
-
-These were recorded on an OpenWrt virtual machine whose two disks are laid out exactly like
-WD's (RAID 1 data mirror on partition 2). That's why `check` shows "QEMU" hardware; on a
-real NAS you'll see your EX2 Ultra's details.
-
-**`./setup.sh check`**: read-only overview
-
-![setup.sh check](docs/images/setup-1-check.png)
-
-**`./setup.sh packages`**: mdadm is installed without its scripts, as the OpenWrt wiki advises
-
-![setup.sh packages](docs/images/setup-2-packages.png)
-
-**`./setup.sh data`**: finds WD's data mirror and skips WD's swap arrays
-
-![setup.sh data](docs/images/setup-3-data.png)
-
-**`./setup.sh install`**
-
-![setup.sh install](docs/images/setup-4-install.png)
-
-**After the reboot**: the mirror is assembled, the files are intact, the services are running
-
-![after reboot](docs/images/setup-5-after-reboot.png)
-
-</details>
+Step-by-step with screenshots: **[docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md)**.
+Using Windows? Run the same scripts in WSL: **[docs/WINDOWS.md](docs/WINDOWS.md)**.
 
 Later changes: edit the files, then `./setup.sh update`. Upgrade OpenWrt with
 **System → Attended Sysupgrade**. Everything installed here is listed in

@@ -1,0 +1,4 @@
+# Keep Unix line endings everywhere, also when cloned on Windows:
+# the scripts run on the NAS and in WSL, and Windows line endings (CRLF) would break them.
+* text=auto eol=lf
+*.png binary

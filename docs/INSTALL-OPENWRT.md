@@ -5,7 +5,8 @@ the checks from this repo added:
 **https://openwrt.org/toh/western_digital/mycloud_ex2_ultra**
 If that page and this guide ever disagree, trust the wiki: it's kept up to date.
 
-You need a computer (Mac or Linux) on the same network as the NAS. Flashing doesn't touch
+You need a computer on the same network as the NAS: a Mac, a Linux PC, or a Windows PC
+with WSL ([WINDOWS.md](WINDOWS.md); on Windows, run every command below in Ubuntu). Flashing doesn't touch
 the disks or your data, but **back up anything irreplaceable first** anyway.
 
 ## 1. Turn on SSH in the WD firmware
@@ -128,7 +129,7 @@ ssh-copy-id root@<NAS IP>
 ```
 
 Give the NAS a fixed address (a DHCP reservation on your router is easiest), then continue
-with the [README](../README.md) quick start: `./setup.sh check`.
+with the **[setup guide](SETUP-GUIDE.md)**.
 
 ## If it doesn't boot (recovery)
 
