@@ -96,6 +96,8 @@ Open **`http://nas.local`** (or `http://<NAS IP>`) and sign in as `root`.
 
 ![Dashboard overview](images/dashboard-overview.png)
 
+<sub>Real EX2 Ultra dashboard; user and share names and the address are examples.</sub>
+
 <table>
 <tr>
 <td><img src="images/dashboard-users.png" alt="Users page"></td>
