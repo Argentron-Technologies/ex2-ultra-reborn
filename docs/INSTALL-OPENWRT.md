@@ -61,15 +61,24 @@ shasum -a 256 -c sha256sums --ignore-missing     # every file must say OK
 
 ## 4. Copy the two factory images to the NAS
 
+Keep **only one OpenWrt version** in the download folder. The commands below use `*`
+patterns, and two versions would match two files.
+
 ```sh
-scp *-uImage-factory.bin *-image-cfs-factory.bin sshd@<NAS IP>:/tmp/
+ls *-uImage-factory.bin *-image-cfs-factory.bin      # must list exactly 2 files
+scp -O *-uImage-factory.bin *-image-cfs-factory.bin sshd@<NAS IP>:/tmp/
 ```
 
-If `scp` doesn't work, this always does (one file at a time):
+`-O` makes `scp` use the classic copy protocol. Since OpenSSH 9.0 (current macOS and Linux),
+plain `scp` uses SFTP, which the WD firmware may not offer.
+
+If `scp` still fails, this works with nothing but SSH. It keeps the original file names,
+which the flash commands in step 5 rely on:
 
 ```sh
-ssh sshd@<NAS IP> 'cat > /tmp/uImage-factory.bin' < openwrt-*-uImage-factory.bin
-ssh sshd@<NAS IP> 'cat > /tmp/image-cfs-factory.bin' < openwrt-*-image-cfs-factory.bin
+for f in *-uImage-factory.bin *-image-cfs-factory.bin; do
+  ssh sshd@<NAS IP> "cat > /tmp/$f" < "$f"
+done
 ```
 
 ## 5. Flash (the step that changes the NAS)
@@ -78,7 +87,7 @@ On the NAS (`ssh sshd@<NAS IP>`), run exactly these commands, from the wiki:
 
 ```sh
 cd /tmp
-ls -l *-uImage-factory.bin *-image-cfs-factory.bin      # both present, sizes as downloaded
+ls -l *-uImage-factory.bin *-image-cfs-factory.bin      # exactly 2 files, same sizes as on your computer
 
 flash_eraseall /dev/mtd1 && nandwrite --markbad -p /dev/mtd1 /tmp/*-uImage-factory.bin
 ubiformat /dev/mtd3 -f /tmp/*-image-cfs-factory.bin -y
