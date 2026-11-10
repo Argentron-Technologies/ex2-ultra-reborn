@@ -43,13 +43,23 @@ KEEP="/usr/sbin/nas-fan /usr/sbin/nas-alert /usr/sbin/nas-watch /usr/sbin/nas-us
 /www/luci-static/resources/nas/ /www/luci-static/resources/view/nas/ /usr/share/rpcd/ucode/luci.nas
 /usr/share/rpcd/acl.d/luci-app-nas.json /usr/share/luci/menu.d/luci-app-nas.json"
 
+# how the user runs the next step: the Windows scripts run setup.sh on the NAS (NAS=local)
+if [ "$NAS" = local ]; then RUN='.\setup.cmd'; else RUN='./setup.sh'; fi
+
 say()  { printf '\n== %s\n' "$*"; }
 die()  { trap - EXIT; printf 'STOP: %s\n' "$*" >&2; exit 1; }
 ask()  { printf '%s [y/N] ' "$1"; read -r a < /dev/tty; [ "$a" = y ] || [ "$a" = Y ]; }
-on()   { ssh -o ConnectTimeout=8 "$NAS" "$@"; }
+# NAS=local: run directly on the NAS (used by the Windows scripts, which upload this repo
+# to the NAS and run setup.sh there). Otherwise every NAS command goes over SSH.
+if [ "$NAS" = local ]; then
+	on() { sh -c "$*"; }
+else
+	on() { ssh -o ConnectTimeout=8 "$NAS" "$@"; }
+fi
 trap 'rc=$?; [ $rc -eq 0 ] || printf "\nSTOP: a step failed (exit %s). Nothing after it was done; it is safe to fix the cause and run the same command again.\n" "$rc" >&2' EXIT
 
 find_nas() {
+	[ "$NAS" = local ] && return
 	if [ -n "$NAS" ]; then
 		ssh -o ConnectTimeout=8 -o BatchMode=yes "$NAS" true 2>/dev/null || \
 			die "can't connect to $NAS over SSH. Check the address, and add your key first: ssh-copy-id $NAS"
@@ -91,7 +101,7 @@ guard() {
 }
 
 cmd_check() {
-	say "NAS: $NAS"
+	if [ "$NAS" = local ]; then say "NAS: $(cat /proc/sys/kernel/hostname) (running on the NAS)"; else say "NAS: $NAS"; fi
 	on 'set +e
 		. /etc/openwrt_release; echo "OpenWrt:   $DISTRIB_DESCRIPTION"
 		echo "Model:     $(cat /tmp/sysinfo/model)"
@@ -103,7 +113,7 @@ cmd_check() {
 			echo "  $n  ${s} GB  $(cat $d/device/model 2>/dev/null)  $(readlink -f $d | grep -q /usb && echo USB || echo bay)"
 		done
 		echo; echo "RAID arrays found on the disks (read-only scan):"
-		if command -v mdadm >/dev/null; then mdadm --examine --scan 2>/dev/null | sed "s/^/  /"; else echo "  (mdadm not installed yet: run ./setup.sh packages)"; fi
+		if command -v mdadm >/dev/null; then mdadm --examine --scan 2>/dev/null | sed "s/^/  /"; else echo "  (mdadm not installed yet: run the packages step)"; fi
 		echo; echo "Running arrays:"; grep ^md /proc/mdstat 2>/dev/null | sed "s/^/  /" | grep . || echo "  none"
 		echo; echo "Mounted disk partitions:"; grep -E "^/dev/(sd|md)" /proc/mounts | sed "s/^/  /" | grep . || echo "  none"'
 }
@@ -130,7 +140,7 @@ cmd_packages() {
 
 cmd_data() {
 	say "looking for the data mirror (read-only)"
-	on 'command -v mdadm >/dev/null' || die "mdadm missing: run ./setup.sh packages first"
+	on 'command -v mdadm >/dev/null' || die "mdadm missing: run $RUN packages first"
 	# one line per array: "ARRAY ... level=raid1 ... UUID=... devices=/dev/sda2,/dev/sdb2"
 	all=$(on 'mdadm --examine --scan --verbose 2>/dev/null' | awk '/^ARRAY/ {if (l) print l; l=$0; next} {l=l " " $1} END {if (l) print l}')
 	echo "${all:-  (no RAID metadata on any disk)}"
@@ -183,7 +193,7 @@ cmd_data() {
 		uci set fstab.data.enabled=1
 		uci commit fstab
 		/etc/init.d/mdadm enable"
-	echo "saved. Next: ./setup.sh install, then reboot the NAS once."
+	echo "saved. Next: $RUN install, then reboot the NAS once."
 }
 
 cmd_code() {
@@ -212,7 +222,7 @@ cmd_restart() {
 }
 
 cmd_install() {
-	on 'command -v smbd >/dev/null && command -v mdadm >/dev/null' || die "packages missing: run ./setup.sh packages first"
+	on 'command -v smbd >/dev/null && command -v mdadm >/dev/null' || die "packages missing: run $RUN packages first"
 	printf 'Local name for the NAS (becomes <name>.local) [nas]: '; read -r host < /dev/tty; host=${host:-nas}
 	echo "$host" | grep -qE '^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$' || die "use 1-15 lowercase letters, digits or '-'"
 	printf 'Display name shown in Finder and on the dashboard [My NAS]: '; read -r name < /dev/tty; name=${name:-My NAS}
@@ -267,7 +277,8 @@ CR
 
 	cmd_restart
 	echo
-	echo "Done. Reboot the NAS once:  ssh $NAS reboot"
+	if [ "$NAS" = local ]; then echo "Done. Reboot the NAS once (setup.ps1 asks you)."
+	else echo "Done. Reboot the NAS once:  ssh $NAS reboot"; fi
 	echo "Then open http://$host.local, sign in as root, set your time zone (System), and create users and shares on the NAS pages."
 }
 
