@@ -111,7 +111,41 @@ Open **`http://nas.local`** (or `http://<NAS IP>`) and sign in as `root`.
 |---|---|
 | **Mac** | Finder → Network, or *Go → Connect to Server* → `smb://nas.local`. Time Machine: *System Settings → General → Time Machine → Add Backup Disk*. |
 | **Windows** | File Explorer → Network, or type `\\nas.local` in the address bar. See [Windows](WINDOWS.md). |
-| **E-mail alerts** | Optional: `./setup.sh alerts` (Windows: `.\setup.cmd alerts`) |
+
+## 8. E-mail alerts (optional)
+
+The NAS can e-mail you when something needs attention: a disk drops out of the mirror, a
+disk runs hot or reports SMART errors, storage is nearly full, the fan stops, or the NAS
+restarts unexpectedly. Repeated alerts for the same problem are spaced out, so they won't
+flood your inbox.
+
+**Gmail:** turn on 2-Step Verification, then create an app password at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and use it
+below instead of your normal password.
+
+```sh
+./setup.sh alerts             # Windows: .\setup.cmd alerts
+```
+
+| It asks | Gmail | Your own mail server |
+|---|---|---|
+| `Send alerts to` | where alerts should go | any address |
+| `SMTP server` | `smtp.gmail.com` | e.g. `mail.yourdomain.com` |
+| `SMTP port (STARTTLS)` | `587` | `587` |
+| `SMTP user` | your full Gmail address | your mailbox login |
+| `From address` | press Enter (same as the user) | e.g. `nas@yourdomain.com` |
+| `SMTP password (not shown)` | the app password | your mailbox password |
+
+> [!IMPORTANT]
+> Use port **587**: the NAS connects with STARTTLS. Port 465 won't work. On the first run
+> the brackets show placeholders like `[smtp.example.com]`, so type real values.
+
+It sends a test e-mail straight away and prints `Sent to …`. If it says `Sending failed`,
+the reason is in `/tmp/nas-alert.log` on the NAS (`ssh root@nas.local cat /tmp/nas-alert.log`).
+Run `alerts` again to fix a value: it shows your previous answers in brackets. Send a test
+at any time with `ssh root@nas.local nas-alert test`.
+
+The password is stored only on the NAS, in a file only `root` can read, never in this repo.
 
 **Done.** For day-to-day care, upgrades and troubleshooting, see
 **[Maintenance →](MAINTENANCE.md)**
