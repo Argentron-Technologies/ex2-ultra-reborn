@@ -1,17 +1,37 @@
 #!/bin/sh /etc/rc.common
 # Mount the data mirror once mdadm has assembled it (fstab runs earlier,
 # before /dev/md1 exists). Starts after mdadm (S13), before Samba (S98).
+#
+# mdadm's boot-time assembly can fail now and then ("failed to create /dev/md1"),
+# leaving an empty md1 in state "clear". In that case, retry the same assembly
+# mdadm's init script runs. --assemble only starts the array from the disks it
+# already has: it never adds, re-adds or rebuilds a disk.
 
 START=14
 
+md_running() {
+	case "$(cat /sys/block/md1/md/array_state 2>/dev/null)" in
+		clean|active|active-idle|write-pending|read-auto|readonly) return 0 ;;
+	esac
+	return 1
+}
+
 boot() {
-	for i in $(seq 1 60); do
-		[ "$(cat /sys/block/md1/md/array_state 2>/dev/null)" != "" ] && \
-		[ "$(cat /sys/block/md1/md/array_state)" != inactive ] && break
-		sleep 1
+	try=0
+	while ! md_running && [ $try -lt 3 ]; do
+		for i in $(seq 1 20); do md_running && break; sleep 1; done
+		md_running && break
+		try=$((try + 1))
+		logger -t nas-datamount "md1 not running ($(cat /sys/block/md1/md/array_state 2>/dev/null || echo missing)), assembling again ($try/3)"
+		[ "$(cat /sys/block/md1/md/array_state 2>/dev/null)" = clear ] && mdadm --stop /dev/md1 >/dev/null 2>&1
+		mdadm --assemble --scan --config=/var/etc/mdadm.conf >/dev/null 2>&1
 	done
 	grep -q " /mnt/data " /proc/mounts || block mount
-	grep -q " /mnt/data " /proc/mounts || logger -t nas-datamount "data mirror could not be mounted"
+	if grep -q " /mnt/data " /proc/mounts; then
+		[ $try -gt 0 ] && logger -t nas-datamount "data mirror mounted after $try retry(s)"
+	else
+		logger -t nas-datamount "data mirror could not be mounted"
+	fi
 }
 
 start() { boot; }

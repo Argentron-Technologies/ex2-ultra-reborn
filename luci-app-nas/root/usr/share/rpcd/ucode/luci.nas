@@ -69,6 +69,12 @@ function disk_info(dev) {
 	};
 }
 
+// int() of an empty sysfs value is NaN, and NaN breaks the JSON reply (the whole page fails)
+function sysfs_int(v) {
+	let n = int(v ?? 0);
+	return (type(n) == 'int') ? n : 0;
+}
+
 function raid_info() {
 	/* Read everything from sysfs and /proc/mdstat: unlike `mdadm --detail`
 	 * this never touches the disks, so it cannot keep them awake. */
@@ -76,8 +82,8 @@ function raid_info() {
 	let state = read1(`${md}/array_state`);
 	if (state == null) return null;
 
-	let total = int(read1(`${md}/raid_disks`) ?? 0);
-	let degraded = int(read1(`${md}/degraded`) ?? 0);
+	let total = sysfs_int(read1(`${md}/raid_disks`));
+	let degraded = sysfs_int(read1(`${md}/degraded`));
 	let action = read1(`${md}/sync_action`) ?? 'idle';
 	let members = [];
 
@@ -99,7 +105,8 @@ function raid_info() {
 		finish = f ? +f[1] : null;
 	}
 
-	let words = [ state ];
+	// "clear" / "inactive": md1 exists but is not running (e.g. assembly failed at boot)
+	let words = (state == 'clear' || state == 'inactive') ? [ 'not running' ] : [ state ];
 	if (degraded > 0) push(words, 'degraded');
 	if (action == 'recover') push(words, 'recovering');
 	if (action == 'resync') push(words, 'resyncing');
