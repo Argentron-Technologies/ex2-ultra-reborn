@@ -6,7 +6,7 @@
 
 [![OpenWrt 25.12+](https://img.shields.io/badge/OpenWrt-25.12%2B-00a3e0)](https://openwrt.org/toh/western_digital/mycloud_ex2_ultra) [![Device](https://img.shields.io/badge/device-WD%20My%20Cloud%20EX2%20Ultra-555)](#supported-hardware) [![License](https://img.shields.io/badge/license-Apache--2.0-3fbf93)](LICENSE)
 
-[Getting started](#getting-started) · [Documentation](#documentation) · [Safety](#safety) · [License](#license) · [argentrontech.com](https://argentrontech.com)
+[Getting started](#getting-started) · [Step-by-step blog post](https://argentrontech.com/blog/install-openwrt-wd-my-cloud-ex2-ultra) · [Documentation](#documentation) · [Safety](#safety) · [License](#license) · [argentrontech.com](https://argentrontech.com)
 
 <img src="docs/images/dashboard-overview.png" alt="NAS OS dashboard" width="860">
 
@@ -18,6 +18,10 @@ WD's firmware for the EX2 Ultra is nearing the end of its support, but the hardw
 OpenWrt supports this NAS officially. This project adds what's missing to make it a
 complete home NAS: a clean dashboard, fan control, health alerts and a one-command
 installer. **Your existing data stays where it is.** WD's RAID 1 mirror is reused as is.
+
+> [!TIP]
+> New to OpenWrt? Read the beginner-friendly walkthrough on our blog:
+> **[Install OpenWrt on a WD My Cloud EX2 Ultra with a Next-Gen NAS UI](https://argentrontech.com/blog/install-openwrt-wd-my-cloud-ex2-ultra)**
 
 ## Features
 
@@ -81,6 +85,7 @@ The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots
 | [Setup guide](docs/SETUP-GUIDE.md) | `setup.sh` step by step, dashboard tour, connecting clients |
 | [Windows](docs/WINDOWS.md) | The PowerShell / Command Prompt scripts, using the NAS from File Explorer |
 | [Maintenance](docs/MAINTENANCE.md) | Health checks, upgrades, disks and RAID, fan, troubleshooting |
+| [Blog post](https://argentrontech.com/blog/install-openwrt-wd-my-cloud-ex2-ultra) | The whole journey for beginners: exact OpenWrt version, flashing, setup, e-mail alerts |
 | [CLAUDE.md](CLAUDE.md) | Hardware notes, rules and how to add features (for contributors and AI assistants) |
 
 ## Project layout
