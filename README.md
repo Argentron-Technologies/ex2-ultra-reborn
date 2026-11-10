@@ -66,9 +66,11 @@ ssh-copy-id $NAS
 ./setup.sh data         # reuse the WD data mirror (no disk writes)
 ./setup.sh install      # dashboard, fan control, alerts, disk sleep
 ssh $NAS reboot
+./setup.sh alerts       # optional: e-mail alerts (Gmail works, port 587)
 ```
 
-Then open `http://nas.local` and create your users and shares.
+Then open `http://nas.local` and create your users and shares. For e-mail alerts with Gmail
+or your own mail server, see [e-mail alerts](docs/SETUP-GUIDE.md#8-e-mail-alerts-optional).
 The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots.
 
 ## Documentation
