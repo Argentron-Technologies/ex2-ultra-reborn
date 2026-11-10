@@ -107,7 +107,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $tarPath = Join-Path ([IO.Path]::GetTempPath()) 'ex2-ultra-reborn.tar'
-& tar -cf $tarPath -C $Repo setup.sh nas-system luci-app-nas luci-theme-nasos
+$env:COPYFILE_DISABLE = '1'   # macOS (PowerShell 7): no ._ metadata files in the archive
+& tar --exclude='._*' --exclude=.DS_Store -cf $tarPath -C $Repo setup.sh nas-system luci-app-nas luci-theme-nasos
 if ($LASTEXITCODE -ne 0) { Stop-Setup 'could not pack the repo (tar).' }
 
 # scp -O copies the file byte for byte (OpenWrt's dropbear provides the scp it needs)
@@ -124,7 +125,7 @@ if ($rc -ne 0) { Stop-Setup "could not copy the files to the NAS (scp exit code 
 # -t gives setup.sh a terminal for its questions; files are removed from the NAS afterwards.
 # chmod: Windows tar stores every file as 0666 and every folder as 0777; without it, setup.sh
 # would install world-writable files (and make existing system folders world-writable).
-& ssh -t -o ConnectTimeout=8 $Nas "rm -rf /tmp/ex2rb; mkdir -p /tmp/ex2rb && tar -xf /tmp/ex2rb.tar -C /tmp/ex2rb && rm -f /tmp/ex2rb.tar && chmod -R go-w /tmp/ex2rb && NAS=local sh /tmp/ex2rb/setup.sh $Command; rc=`$?; rm -rf /tmp/ex2rb /tmp/ex2rb.tar; exit `$rc"
+& ssh -t -o ConnectTimeout=8 $Nas "rm -rf /tmp/ex2rb; mkdir -p /tmp/ex2rb && tar -x -o -f /tmp/ex2rb.tar -C /tmp/ex2rb && rm -f /tmp/ex2rb.tar && chmod -R go-w /tmp/ex2rb && NAS=local sh /tmp/ex2rb/setup.sh $Command; rc=`$?; rm -rf /tmp/ex2rb /tmp/ex2rb.tar; exit `$rc"
 $rc = $LASTEXITCODE
 if ($rc -ne 0) { exit $rc }
 

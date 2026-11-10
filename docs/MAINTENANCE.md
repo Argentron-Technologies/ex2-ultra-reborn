@@ -116,6 +116,7 @@ You get an e-mail when the rebuild starts and when it finishes.
 | Symptom | Fix |
 |---|---|
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` right after installing OpenWrt | Expected: the preflight saved the WD firmware's SSH identity for the same address. Mac/Linux: `ssh-keygen -R <NAS IP>`, then connect again. Windows: `.\setup.cmd key` offers to do this. Only do it if you just reinstalled the NAS. |
+| Files on the NAS owned by your computer's user ID (`ls -ln /usr/share/rpcd/ucode/luci.nas` shows 501 or 1000 instead of 0) | Installs from Mac or Linux before November 2026 kept your computer's user ID on the copied files. Run `./setup.sh update` once: it sets them back to root and removes macOS `._` files. |
 | Dashboard's NAS pages fail to load after installing from Windows | Installs from Windows before November 2026 left files writable by everyone, and rpcd skipped the dashboard backend. Run `.\setup.cmd update` once. |
 | Dashboard shows old pages after an update | `nas# touch /lib/apk/db/installed`, then reload the page (`setup.sh update` does this for you) |
 | Dashboard says "Storage is offline" | `nas# cat /proc/mdstat`. If md1 isn't running: `nas# /etc/init.d/nas-datamount start`. It re-assembles the mirror from its own disks and mounts it. |

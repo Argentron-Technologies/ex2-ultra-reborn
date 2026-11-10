@@ -47,7 +47,7 @@ KEEP="/usr/sbin/nas-fan /usr/sbin/nas-alert /usr/sbin/nas-watch /usr/sbin/nas-us
 if [ "$NAS" = local ]; then RUN='.\setup.cmd'; else RUN='./setup.sh'; fi
 
 say()  { printf '\n== %s\n' "$*"; }
-die()  { trap - EXIT; printf 'STOP: %s\n' "$*" >&2; exit 1; }
+die()  { trap - EXIT; rm -f "$EXCL"; printf 'STOP: %s\n' "$*" >&2; exit 1; }
 ask()  { printf '%s [y/N] ' "$1"; read -r a < /dev/tty; [ "$a" = y ] || [ "$a" = Y ]; }
 # NAS=local: run directly on the NAS (used by the Windows scripts, which upload this repo
 # to the NAS and run setup.sh there). Otherwise every NAS command goes over SSH.
@@ -56,7 +56,10 @@ if [ "$NAS" = local ]; then
 else
 	on() { ssh -o ConnectTimeout=8 "$NAS" "$@"; }
 fi
-trap 'rc=$?; [ $rc -eq 0 ] || printf "\nSTOP: a step failed (exit %s). Nothing after it was done; it is safe to fix the cause and run the same command again.\n" "$rc" >&2' EXIT
+# files never to copy to the NAS (macOS metadata). "tar -X FILE" works in BusyBox (setup.sh
+# runs on the NAS for Windows users), GNU tar and macOS tar; "--exclude" does not in BusyBox.
+EXCL=$(mktemp); printf '._*\n.DS_Store\n' > "$EXCL"
+trap 'rc=$?; rm -f "$EXCL"; [ $rc -eq 0 ] || printf "\nSTOP: a step failed (exit %s). Nothing after it was done; it is safe to fix the cause and run the same command again.\n" "$rc" >&2' EXIT
 
 find_nas() {
 	[ "$NAS" = local ] && return
@@ -94,7 +97,7 @@ guard() {
 	[ "$(val target)" = "mvebu/cortexa9" ] || bad="$bad\n  OpenWrt target is '$(val target)', expected 'mvebu/cortexa9'"
 	[ "$(val mcu)" = yes ] || bad="$bad\n  no /dev/ttyS1 (the fan and power microcontroller)"
 	if [ -n "$bad" ]; then
-		trap - EXIT
+		trap - EXIT; rm -f "$EXCL"
 		# name the device by its model: with NAS=local (Windows) $NAS is just the word "local"
 		if [ "$NAS" = local ]; then at="This device"; else at="The device at $NAS"; fi
 		printf 'STOP: %s (%s) is not a WD My Cloud EX2 Ultra running OpenWrt:%b\nThese scripts are only for that model. Nothing was changed.\n' \
@@ -208,21 +211,51 @@ cmd_data() {
 
 cmd_code() {
 	say "system scripts"
-	(cd "$HERE/nas-system/root" && tar cf - $SYSTEM_FILES) | on 'tar xf - -C / &&
+	(cd "$HERE/nas-system/root" && tar -X "$EXCL" -cf - $SYSTEM_FILES) | on 'tar -x -o -f - -C / &&
 		chmod 755 /usr/sbin/nas-* /etc/init.d/nas-* &&
 		for s in nas-datamount nas-fan nas-watch nas-usb nas-poweroff; do /etc/init.d/$s enable; done'
-	on '[ -f /etc/config/nas-alert ]' || (cd "$HERE/nas-system/root" && tar cf - etc/config/nas-alert) | on 'tar xf - -C /'
+	on '[ -f /etc/config/nas-alert ]' || (cd "$HERE/nas-system/root" && tar -X "$EXCL" -cf - etc/config/nas-alert) | on 'tar -x -o -f - -C /'
 	# installs from Windows before the fix in setup.ps1 left this file world-writable
 	on 'chmod 644 /etc/config/nas-alert'
 
 	say "dashboard (luci-app-nas)"
-	(cd "$HERE/luci-app-nas/htdocs/luci-static/resources" && tar cf - nas view/nas) | on 'tar xf - -C /www/luci-static/resources'
-	(cd "$HERE/luci-app-nas/root" && tar cf - usr) | on 'tar xf - -C /'
+	(cd "$HERE/luci-app-nas/htdocs/luci-static/resources" && tar -X "$EXCL" -cf - nas view/nas) | on 'tar -x -o -f - -C /www/luci-static/resources'
+	(cd "$HERE/luci-app-nas/root" && tar -X "$EXCL" -cf - usr) | on 'tar -x -o -f - -C /'
 
 	say "theme (luci-theme-nasos)"
-	(cd "$HERE/luci-theme-nasos/htdocs/luci-static" && tar cf - nasos resources/menu-nasos.js) | on 'tar xf - -C /www/luci-static'
-	(cd "$HERE/luci-theme-nasos/ucode/template" && tar cf - themes/nasos) | on 'mkdir -p /usr/share/ucode/luci/template && tar xf - -C /usr/share/ucode/luci/template'
-	(cd "$HERE/luci-theme-nasos/root" && tar cf - etc) | on 'tar xf - -C / && sh /etc/uci-defaults/30_luci-theme-nasos && rm -f /etc/uci-defaults/30_luci-theme-nasos'
+	(cd "$HERE/luci-theme-nasos/htdocs/luci-static" && tar -X "$EXCL" -cf - nasos resources/menu-nasos.js) | on 'tar -x -o -f - -C /www/luci-static'
+	(cd "$HERE/luci-theme-nasos/ucode/template" && tar -X "$EXCL" -cf - themes/nasos) | on 'mkdir -p /usr/share/ucode/luci/template && tar -x -o -f - -C /usr/share/ucode/luci/template'
+	(cd "$HERE/luci-theme-nasos/root" && tar -X "$EXCL" -cf - etc) | on 'tar -x -o -f - -C / && sh /etc/uci-defaults/30_luci-theme-nasos && rm -f /etc/uci-defaults/30_luci-theme-nasos'
+	fix_files
+}
+
+# Owner and leftovers. Files copied from a Mac or Linux PC used to keep that PC's user ID as their owner (tar
+# restores it), e.g. 501 from macOS or 1000 from Linux; 1000 is also the first NAS user the
+# dashboard creates. Everything is now extracted with "tar -o" (owner root); this repairs
+# older installs: our files, and the system folders their archives passed through.
+fix_files() {
+	on 'for d in /etc /etc/config /etc/init.d /etc/hotplug.d /etc/hotplug.d/block /etc/uci-defaults /etc/samba \
+		/usr /usr/sbin /usr/share /usr/share/rpcd /usr/share/rpcd/ucode /usr/share/rpcd/acl.d \
+		/usr/share/luci /usr/share/luci/menu.d /usr/share/ucode /usr/share/ucode/luci \
+		/usr/share/ucode/luci/template /usr/share/ucode/luci/template/themes \
+		/www /www/luci-static /www/luci-static/resources /www/luci-static/resources/view; do
+			[ -d "$d" ] && chown root:root "$d"; done
+		for p in /www/luci-static/nasos /www/luci-static/resources/nas /www/luci-static/resources/view/nas \
+		/usr/share/ucode/luci/template/themes/nasos; do [ -e "$p" ] && chown -R root:root "$p"; done
+		chown root:root /usr/sbin/nas-* /etc/init.d/nas-* /etc/hotplug.d/block/30-nas-usb \
+			/www/luci-static/resources/menu-nasos.js /usr/share/rpcd/ucode/luci.nas \
+			/usr/share/rpcd/acl.d/luci-app-nas.json /usr/share/luci/menu.d/luci-app-nas.json \
+			/etc/config/nas-alert /etc/samba/smb.conf.template 2>/dev/null
+		# macOS metadata files ("._name") that older copies could carry along. Some of these
+		# folders load every file in them (uci-defaults even runs them at boot).
+		for d in /etc/uci-defaults /etc/init.d /etc/hotplug.d/block /usr/sbin /usr/share/rpcd/ucode \
+		/usr/share/rpcd/acl.d /usr/share/luci/menu.d /usr/share/ucode/luci/template/themes \
+		/www/luci-static /www/luci-static/resources /www/luci-static/resources/view; do
+			[ -d "$d" ] && find "$d" -name "._*" -exec rm -f {} + ; done
+		# ...and the ones for folders, one level up (only directly in these folders)
+		for d in /etc /usr /usr/share /usr/share/rpcd /usr/share/luci /usr/share/ucode /usr/share/ucode/luci \
+		/usr/share/ucode/luci/template /www; do
+			[ -d "$d" ] && find "$d" -maxdepth 1 -name "._*" -type f -exec rm -f {} + ; done; true'
 }
 
 cmd_restart() {
@@ -242,7 +275,7 @@ cmd_install() {
 	cmd_code
 
 	say "system settings"
-	(cd "$HERE/nas-system/root" && tar cf - etc/samba/smb.conf.template) | on 'mkdir -p /tmp/nas-setup && tar xf - -C /tmp/nas-setup'
+	(cd "$HERE/nas-system/root" && tar -X "$EXCL" -cf - etc/samba/smb.conf.template) | on 'mkdir -p /tmp/nas-setup && tar -x -o -f - -C /tmp/nas-setup'
 	on "set -e
 		# names and time
 		uci set system.@system[0].hostname='$host'

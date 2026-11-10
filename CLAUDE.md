@@ -88,6 +88,12 @@ mirror. Do not break these rules, even if asked to "just try something":
 - Don't redirect a native command's stderr (`2>$null`) while `$ErrorActionPreference =
   'Stop'`: PowerShell 5.1 turns it into a terminating error.
 - Keep `.cmd` and `.ps1` files with CRLF line endings (`.gitattributes`), everything else LF.
+- **Extract on the NAS with `tar -x -o`** (BusyBox: don't restore user:group). Otherwise files
+  keep the PC's user ID (501 on macOS, 1000 on Linux; 1000 is also the first NAS user the
+  dashboard creates). `fix_files` in `setup.sh` repairs older installs.
+- **Exclude with `tar -X FILE`, never `--exclude`**: BusyBox tar has no `--exclude`, and on
+  Windows `setup.sh` runs on the NAS with BusyBox. Keep `._*` (macOS metadata) and `.DS_Store`
+  out of every archive: some NAS folders load or run every file in them (`/etc/uci-defaults`).
 - Test on macOS/Linux with PowerShell 7 (`brew install powershell`) against a VM. The `cmd.exe`
   branch only runs on real Windows.
 
