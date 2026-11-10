@@ -119,6 +119,6 @@ Western Digital.
 
 <div align="center">
 
-Made by **[Argentron Technologies](https://argentrontech.com)**
+Made with ❤️ by **[Argentron Technologies Pvt. Ltd.](https://argentrontech.com)**
 
 </div>
