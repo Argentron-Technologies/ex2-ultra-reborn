@@ -190,7 +190,7 @@ function system_info() {
 		mem_used: mem_used,
 		soc_temp: soc ? int(soc) / 1000 : null,
 		fan_level: read1('/tmp/nas-fan.level'),
-		fan_rpm: (rpm && int(rpm) > 0) ? int(rpm) : null,
+		fan_rpm: (rpm && int(rpm) > 0 && int(rpm) <= 10000) ? int(rpm) : null,   // nas-fan RPM_MAX (fan max ~8800): above is a misread
 		board_temp: match(read1('/tmp/nas-fan.board') ?? '', /^\d+$/) ? int(read1('/tmp/nas-fan.board')) : null,
 		ip: ip,
 		link: {
