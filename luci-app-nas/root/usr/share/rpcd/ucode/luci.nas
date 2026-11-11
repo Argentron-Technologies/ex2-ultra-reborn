@@ -148,6 +148,9 @@ function refresh_names() {
 function system_info() {
 	let mem = readfile('/proc/meminfo') ?? '';
 	let mt = match(mem, /MemTotal:\s+(\d+)/), ma = match(mem, /MemAvailable:\s+(\d+)/);
+	// "used" as the free command computes it: total - free - buffers - cache - reclaimable slab
+	let kb = (k) => { let m = match(mem, regexp(`(^|\n)${k}:\\s+(\\d+)`)); return m ? int(m[2]) : 0; };
+	let mem_used = mt ? (kb('MemTotal') - kb('MemFree') - kb('Buffers') - kb('Cached') - kb('SReclaimable')) * 1024 : null;
 	let rel = match(readfile('/etc/openwrt_release') ?? '', /DISTRIB_DESCRIPTION='([^']+)'/);
 	let soc = read1('/sys/class/thermal/thermal_zone0/temp');
 	let rpm = read1('/tmp/nas-fan.rpm');
@@ -164,6 +167,7 @@ function system_info() {
 		load: split(read1('/proc/loadavg') ?? '', ' ')[0],
 		mem_total: mt ? int(mt[1]) * 1024 : null,
 		mem_avail: ma ? int(ma[1]) * 1024 : null,
+		mem_used: mem_used,
 		soc_temp: soc ? int(soc) / 1000 : null,
 		fan_level: read1('/tmp/nas-fan.level'),
 		fan_rpm: (rpm && int(rpm) > 0) ? int(rpm) : null,

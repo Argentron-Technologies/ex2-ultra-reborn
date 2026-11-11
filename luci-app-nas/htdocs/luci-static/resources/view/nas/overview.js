@@ -145,7 +145,12 @@ return view.extend({
 			E('section', { class: 'nas-card' }, [
 				E('div', { class: 'nas-card-head', style: 'margin:0' }, [ E('div', { class: 'nas-k', style: 'margin:0' }, _('Processor')), E('span', { class: 'nas-muted nas-small' }, _('live')) ]),
 				E('div', { class: 'nas-num', id: 'nas-soc' }, s.soc_temp != null ? [ Math.round(s.soc_temp), E('small', {}, '°C') ] : '—'),
-				E('div', { id: 'nas-soc-spark' }, nas.spark(this.socHistory, _('Processor temperature, recent')))
+				E('div', { id: 'nas-soc-spark' }, nas.spark(this.socHistory, _('Processor temperature, recent'))),
+				/* memory in use, counted like the free command (file cache counts as free: Linux hands it back) */
+				s.mem_total ? E('div', { class: 'nas-muted nas-small', style: 'margin-top:8px',
+					title: _('Memory in use by programs. Space Linux uses as file cache is counted as free.') },
+					_('Memory: %d MB used of %s GB').format(Math.round((s.mem_used != null ? s.mem_used : s.mem_total - (s.mem_avail || 0)) / 1048576),
+						(s.mem_total / 1073741824).toFixed(1).replace(/\.0$/, ''))) : ''
 			]),
 			E('section', { class: 'nas-card' }, [
 				E('div', { class: 'nas-k' }, _('Disk')),
