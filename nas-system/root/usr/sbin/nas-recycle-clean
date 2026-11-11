@@ -9,9 +9,11 @@ DAYS=$(uci -q get nas-alert.main.recycle_days)
 case "$DAYS" in ''|*[!0-9]*) logger -t nas-recycle "invalid recycle_days '$DAYS', using 30"; DAYS=30 ;; esac
 [ "$DAYS" -eq 0 ] && { logger -t nas-recycle "recycle bins are kept forever (recycle_days 0): nothing removed"; exit 0; }
 n=0
-for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\([^.]*\)\.vfs_objects='.*recycle.*'$/\1/p"); do
+# every share's .recycle, also where the bin was switched off since (it may still hold files);
+# never one that is a symlink
+for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\([^.=]*\)=sambashare$/\1/p"); do
 	p=$(uci -q get samba4.$sec.path)/.recycle
-	[ -d "$p" ] || continue
+	[ -d "$p" ] && [ ! -L "$p" ] || continue
 	c=$(find "$p" -type f -mtime +$DAYS | wc -l)
 	find "$p" -type f -mtime +$DAYS -exec rm -f {} +
 	find "$p" -mindepth 1 -type d | sort -r | while read -r d; do rmdir "$d" 2>/dev/null; done

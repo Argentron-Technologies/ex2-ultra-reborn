@@ -16,7 +16,8 @@ NAS: connect first with `ssh root@nas.local`.
 | **Time Machine** | Tick **Time Machine** on a share (optionally capped in GB). On the Mac: *System Settings → General → Time Machine → Add Backup Disk*. |
 | **Rename the NAS** | Click the name chip on the dashboard. Afterwards, check that Time Machine still finds its disk. |
 | **USB drive** | Plug it in and it's shared as `smb://nas.local/<label>`. Eject it from the dashboard: a USB hard drive also spins down, so it can be unplugged safely. FAT32, exFAT, NTFS and ext all work. |
-| **Recycle bin settings** | Dashboard → **Services** card → **Recycle bin**: keep deleted files 7 to 90 days, or forever. Switch it on or off per share when editing a share. |
+| **Recycle bin settings** | Dashboard → **Services** card → **Recycle bin**: keep deleted files 7 to 90 days or forever, switch the bin off for all shares, or **Empty recycle bin…** (all shares or one; permanent). Per share: the switch when editing a share. |
+| **Disk sleep** | Dashboard → **Services** card → **Disk sleep**: spin the disks down after 5 minutes to 2 hours without use, or never. |
 | **Test e-mail alerts** | `nas# nas-alert test`. Retry queued mail with `nas# nas-alert flush`. Limits are in `/etc/config/nas-alert`. |
 
 ## Health check

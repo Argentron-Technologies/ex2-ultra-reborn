@@ -360,10 +360,11 @@ return view.extend({
 				]);
 				return E('div', { class: 'nas-list-row' }, [
 					E('span', {}, _(s.name)),
-					s.id == 'poweroff' || s.id == 'wol' || s.id == 'recycle'
+					[ 'poweroff', 'wol', 'recycle', 'idle' ].indexOf(s.id) >= 0
 						? E('button', { class: 'nas-chip nas-chip-btn',
-							title: { wol: _('Wake-on-LAN settings'), recycle: _('Recycle bin settings') }[s.id] || _('Change idle power-off'),
-							click: () => s.id == 'wol' ? this.wol(s) : s.id == 'recycle' ? this.recycle(s.days) : this.idlePoweroff(s.hours || 0) },
+							title: { wol: _('Wake-on-LAN settings'), recycle: _('Recycle bin settings'), idle: _('Disk sleep settings') }[s.id] || _('Change idle power-off'),
+							click: () => s.id == 'wol' ? this.wol(s) : s.id == 'recycle' ? this.recycle(s.days, s.enabled !== false)
+								: s.id == 'idle' ? this.diskSleep(s.state == 'off' ? 0 : Math.round(s.minutes || 0)) : this.idlePoweroff(s.hours || 0) },
 							[ state, nas.icon('edit', 'nas-ico') ])
 						: state
 				]);
@@ -785,35 +786,113 @@ return view.extend({
 		]);
 	},
 
-	recycle(cur) {
+	diskSleep(cur) {
+		const choices = [ [ 5, _('5 minutes') ], [ 10, _('10 minutes') ], [ 20, _('20 minutes') ], [ 30, _('30 minutes') ],
+			[ 60, _('1 hour') ], [ 120, _('2 hours') ], [ 0, _('Never (disks keep spinning)') ] ];
+		if (!choices.some((c) => c[0] == cur)) choices.push([ cur, _('%d minutes').format(cur) ]);
+		const sel = E('select', {}, choices.map((c) => E('option', { value: c[0], selected: c[0] == cur ? '' : null }, c[1])));
+		const err = E('div', { class: 'nas-error' });
+
+		ui.showModal(_('Disk sleep'), [
+			E('div', { class: 'nas-form' }, [
+				nas.field(_('Spin the disks down after'), sel,
+					_('Time without any disk reads or writes. Both internal disks use the same setting. The first file you open afterwards takes a few seconds while the disks spin up.'))
+			]),
+			E('p', { class: 'nas-muted nas-small', style: 'margin-top:14px' },
+				_('Sleeping disks are quieter, cooler and use less power. Very short times make the disks spin up and down often, which wears them; 10 to 30 minutes suits most homes. This page and the alerts never wake the disks.')),
+			err,
+			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
+					const m = parseInt(sel.value, 10);
+					return nas.callDiskSleepSet(m).then((res) => {
+						if (res && res.error) { err.textContent = res.error; return; }
+						ui.hideModal();
+						nas.notify(m > 0 ? _('The disks now sleep after %d minutes without use.').format(m)
+							: _('Disk sleep is off: the disks keep spinning.'));
+						this.refresh();
+					});
+				}) }, _('Save'))
+			])
+		]);
+	},
+
+	recycle(cur, enabled) {
 		const choices = [ [ 7, _('7 days') ], [ 14, _('14 days') ], [ 30, _('30 days') ], [ 60, _('60 days') ],
 			[ 90, _('90 days') ], [ 0, _('Forever (never empty)') ] ];
 		if (!choices.some((c) => c[0] == cur)) choices.push([ cur, _('%d days').format(cur) ]);
 		const sel = E('select', {}, choices.map((c) => E('option', { value: c[0], selected: c[0] == cur ? '' : null }, c[1])));
 		const err = E('div', { class: 'nas-error' });
+		const on = E('input', { type: 'checkbox', checked: enabled ? '' : null });
+		const keepRow = nas.field(_('Keep deleted files for'), sel,
+					_('Files deleted over the network go to a hidden .recycle folder in their share. Older ones are removed every Sunday at 04:30.'));
+		const sync = () => { sel.disabled = !on.checked; keepRow.style.opacity = on.checked ? '' : '.5'; };
+		on.addEventListener('change', sync); sync();
 
 		ui.showModal(_('Recycle bin'), [
 			E('div', { class: 'nas-form' }, [
-				nas.field(_('Keep deleted files for'), sel,
-					_('Files deleted over the network go to a hidden .recycle folder in their share. Older ones are removed every Sunday at 04:30.'))
+				E('label', { class: 'nas-switch' }, [ on, E('div', {}, [
+					E('b', {}, _('Use a recycle bin')),
+					E('span', {}, _('When off, files deleted over the network are gone immediately, on every share. Turning it back on restores each share\'s own setting.')) ]) ]),
+				keepRow
 			]),
 			E('p', { class: 'nas-muted nas-small', style: 'margin-top:14px' },
-				_('Switch the recycle bin on or off per share under Shares → edit a share. Time Machine shares never have one. With "Forever", deleted files keep using disk space until you remove them from .recycle yourself.')),
+				_('Switch the recycle bin on or off per share under Shares → edit a share. Time Machine shares never have one. With "Forever", deleted files keep using disk space until you empty the bin.')),
 			err,
 			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button cbi-button-negative', style: 'float:left', click: () => this.recycleEmpty() }, _('Empty recycle bin…')),
 				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
 				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
 					const d = parseInt(sel.value, 10);
-					return nas.callRecycleSet(d).then((res) => {
+					return nas.callRecycleSet(d, on.checked).then((res) => {
 						if (res && res.error) { err.textContent = res.error; return; }
 						ui.hideModal();
-						nas.notify(d > 0 ? _('Deleted files are now kept for %d days.').format(d)
+						nas.notify(!on.checked ? _('The recycle bin is off for all shares: deleted files are gone immediately.') : d > 0 ? _('Deleted files are now kept for %d days.').format(d)
 							: _('Deleted files are now kept until you remove them yourself.'));
 						this.refresh();
 					});
 				}) }, _('Save'))
 			])
 		]);
+	},
+
+	recycleEmpty() {
+		ui.showModal(_('Empty recycle bin'), [ E('p', { class: 'nas-muted' }, _('Checking the recycle bins… (sleeping disks spin up first)')) ]);
+		return nas.callRecycleBins().then((res) => {
+			const bins = (res && res.bins) || [];
+			const full = bins.filter((b) => b.files > 0);
+			const total = full.reduce((a, b) => [ a[0] + b.files, a[1] + b.bytes ], [ 0, 0 ]);
+			const what = (files, bytes) => _('%d files, %s').format(files, nas.bytes(bytes));
+			const close = E('div', { class: 'right' }, [ E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Close')) ]);
+			if (!full.length) {
+				ui.showModal(_('Empty recycle bin'), [ E('p', {}, _('All recycle bins are already empty.')), close ]);
+				return;
+			}
+			const sel = E('select', {}, [ E('option', { value: '' }, _('All shares') + ' (' + what(total[0], total[1]) + ')') ]
+				.concat(full.map((b) => E('option', { value: b.id }, b.name + ' (' + what(b.files, b.bytes) + ')'))));
+			const err = E('div', { class: 'nas-error' });
+			ui.showModal(_('Empty recycle bin'), [
+				E('div', { class: 'nas-form' }, [ nas.field(_('Recycle bin to empty'), sel) ]),
+				E('p', { class: 'nas-small', style: 'margin-top:14px' },
+					_('The files are deleted permanently and cannot be restored. Everything else on the shares stays as it is.')),
+				err,
+				E('div', { class: 'right' }, [
+					E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+					E('button', { class: 'btn cbi-button cbi-button-negative', click: () => {
+						const b = full.find((x) => x.id == sel.value);
+						const files = b ? b.files : total[0], bytes = b ? b.bytes : total[1];
+						nas.confirm(_('Delete %s permanently?').format(what(files, bytes)),
+							b ? _('Everything in the recycle bin of "%s" is deleted. This cannot be undone.').format(b.name)
+								: _('Everything in the recycle bins of all shares is deleted. This cannot be undone.'),
+							_('Delete permanently'),
+							() => nas.callRecycleEmpty(sel.value).then((r) => {
+								if (!r || !r.error) nas.notify(_('Recycle bin emptied (%s freed). Large bins can take a minute to finish.').format(nas.bytes(bytes)));
+								return r;
+							}), true);
+					} }, _('Empty…'))
+				])
+			]);
+		});
 	},
 
 	wol(s) {

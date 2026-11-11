@@ -109,7 +109,9 @@ return view.extend({
 		const recycle = E('input', { type: 'checkbox', checked: (isNew || s.recycle) ? '' : null });
 		const recycleRow = E('label', { class: 'nas-switch' }, [ recycle, E('div', {}, [
 			E('b', {}, _('Recycle bin')),
-			E('span', {}, _('Deleted files go to a hidden .recycle folder first, so they can be restored. How long they are kept is set on the Overview page (Services).')) ]) ]);
+			E('span', {}, d.recycle_global === false
+				? _('The recycle bin is switched off for all shares (Overview → Services → Recycle bin). This share uses it again when you switch it back on there.')
+				: _('Deleted files go to a hidden .recycle folder first, so they can be restored. How long they are kept is set on the Overview page (Services).')) ]) ]);
 		const cap = E('input', { type: 'number', min: '0', step: '50', value: s.tm_cap || 1000, style: 'width:110px' });
 		const capRow = E('div', { class: 'nas-field', style: 'margin:-4px 0 0 34px' }, [
 			E('label', {}, _('Maximum size for backups (GB)')), cap,

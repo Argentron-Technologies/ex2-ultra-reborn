@@ -2,7 +2,7 @@
 // Loaded by rpcd (rpcd-mod-ucode) as ubus object "luci.nas".
 'use strict';
 
-import { popen, readfile, writefile, lsdir, stat, mkdir, readlink } from 'fs';
+import { popen, readfile, writefile, lsdir, stat, lstat, mkdir, readlink } from 'fs';
 import { cursor } from 'uci';
 
 const DATA = '/mnt/data';
@@ -25,6 +25,26 @@ function shq(s) {
 function read1(path) {
 	let v = readfile(path);
 	return (v != null) ? trim(v) : null;
+}
+
+/* Recycle bin. Each share keeps its own choice in nas_recycle ('1'/'0'; older installs
+ * only have vfs_objects=recycle). The global switch (nas-alert.main.recycle, unset = on)
+ * decides whether Samba applies it. Time Machine shares never get one. */
+function recycle_global() {
+	let c = cursor();
+	c.load('nas-alert');
+	return (c.get('nas-alert', 'main', 'recycle') ?? '1') != '0';
+}
+
+function share_wants_recycle(s) {
+	if (s.nas_recycle != null) return s.nas_recycle != '0';
+	return index(s.vfs_objects ?? '', 'recycle') >= 0;
+}
+
+function apply_recycle(c, id, wanted, timemachine, global_on) {
+	c.set('samba4', id, 'nas_recycle', wanted ? '1' : '0');
+	if (wanted && !timemachine && global_on) c.set('samba4', id, 'vfs_objects', 'recycle');
+	else c.delete('samba4', id, 'vfs_objects');
 }
 
 function reload_samba() {
@@ -320,10 +340,23 @@ function share_list() {
 			guest: s.guest_ok == 'yes',
 			timemachine: s.timemachine == '1',
 			tm_cap: s.timemachine_maxsize ? int(s.timemachine_maxsize) : null,
-			recycle: index(s.vfs_objects ?? '', 'recycle') >= 0,
+			recycle: share_wants_recycle(s),
 			exists: !!stat(s.path ?? '')
 		});
 	});
+	return out;
+}
+
+/* recycle bins: <share>/.recycle of every share (also ones whose bin was switched off since:
+ * they may still hold files). Only real folders under /mnt/data count (never a symlink),
+ * so emptying can't reach anything else. */
+function recycle_dirs() {
+	let out = [];
+	for (let s in share_list()) {
+		if (type(s.path) != 'string' || index(s.path, DATA + '/') != 0 || index(s.path, '..') >= 0) continue;
+		let p = `${s.path}/.recycle`, st = lstat(p);
+		push(out, { id: s.id, name: s.name, dir: (st && st.type == 'directory') ? p : null });
+	}
 	return out;
 }
 
@@ -361,9 +394,12 @@ function services_info() {
 		if (s.timemachine == '1') tm = true;
 		if (index(s.vfs_objects ?? '', 'recycle') >= 0) recycle = true;
 	});
-	let idle = null;
+	let idle = null, idle_min = 0;
 	c.foreach('hd-idle', 'hd-idle', (s) => {
-		if (s.enabled == '1') idle = (s.idle_time_interval ?? '') + ' ' + (s.idle_time_unit ?? 'minutes');
+		if (s.enabled != '1' || idle) return;
+		let n = int(s.idle_time_interval ?? 10), u = s.idle_time_unit ?? 'minutes';
+		idle = `${n} ${u}`;
+		idle_min = { seconds: n / 60, minutes: n, hours: n * 60, days: n * 1440 }[u] ?? n;
 	});
 	// idle power-off (nas-watch): unset means 48 hours, 0 means never
 	let off_h = c.get('nas-alert', 'main', 'idle_poweroff_hours') ?? '48';
@@ -381,9 +417,9 @@ function services_info() {
 		{ id: 'mdns', name: 'Mac discovery',      state: running('avahi-daemon') ? 'running' : 'stopped' },
 		{ id: 'wsd',  name: 'Windows discovery',  state: running('wsdd2') ? 'running' : 'stopped' },
 		{ id: 'fan',  name: 'Fan control',        state: running('nas-fan') ? 'auto' : 'stopped' },
-		{ id: 'recycle', name: 'Recycle bin', state: recycle ? 'idle' : 'off', days: rdays,
-		  text: recycle ? (rdays > 0 ? `Keeps ${rdays} days` : 'Keeps forever') : null },
-		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle },
+		{ id: 'recycle', name: 'Recycle bin', state: recycle ? 'idle' : 'off', days: rdays, enabled: recycle_global(),
+		  text: !recycle_global() ? 'Off for all shares' : recycle ? (rdays > 0 ? `Keeps ${rdays} days` : 'Keeps forever') : null },
+		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle, minutes: idle_min },
 		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff, hours: off_n },
 		{ id: 'wol', name: 'Wake-on-LAN', state: wol ? 'idle' : 'off',
 		  mac: trim(readfile('/sys/class/net/eth0/address') ?? ''), last: length(last) ? last : null }
@@ -625,7 +661,7 @@ const methods = {
 
 	shares_list: {
 		call: function() {
-			return { shares: share_list(), folders: folder_list(), users: nas_users(), base: DATA };
+			return { shares: share_list(), folders: folder_list(), users: nas_users(), base: DATA, recycle_global: recycle_global() };
 		}
 	},
 
@@ -681,10 +717,9 @@ const methods = {
 			else c.delete('samba4', id, 'read_list');
 			c.delete('samba4', id, 'write_list');
 
-			/* recycle bin: on unless switched off for this share; never on Time Machine shares
-			 * (Time Machine deletes old backup bands constantly) */
-			if (a.timemachine || a.recycle === false) c.delete('samba4', id, 'vfs_objects');
-			else c.set('samba4', id, 'vfs_objects', 'recycle');
+			/* recycle bin: on unless switched off for this share or globally; never on Time Machine
+			 * shares (Time Machine deletes old backup bands constantly) */
+			apply_recycle(c, id, a.recycle !== false, a.timemachine, recycle_global());
 
 			if (a.timemachine) {
 				c.set('samba4', id, 'timemachine', '1');
@@ -761,21 +796,91 @@ const methods = {
 		}
 	},
 
+	// disk sleep (hd-idle): minutes without disk access before the internal disks spin down; 0 = never
+	disk_sleep_set: {
+		args: { minutes: 0 },
+		call: function(req) {
+			let m = req.args.minutes;
+			if (type(m) != 'int' || m < 0 || m > 240)
+				return { error: 'Choose between 1 and 240 minutes, or Never.' };
+			let c = cursor();
+			c.load('hd-idle');
+			let n = 0;
+			c.foreach('hd-idle', 'hd-idle', (s) => {
+				n++;
+				c.set('hd-idle', s['.name'], 'enabled', m > 0 ? '1' : '0');
+				if (m > 0) {
+					c.set('hd-idle', s['.name'], 'idle_time_interval', `${m}`);
+					c.set('hd-idle', s['.name'], 'idle_time_unit', 'minutes');
+				}
+			});
+			if (!n) return { error: 'No disks are set up for sleep (/etc/config/hd-idle). Run setup.sh install again.' };
+			c.commit('hd-idle');
+			system('/etc/init.d/hd-idle restart >/dev/null 2>&1');
+			return { ok: true, minutes: m };
+		}
+	},
+
+	// what is in each recycle bin (reads the folders: may wake sleeping disks)
+	recycle_bins: {
+		call: function() {
+			let out = [];
+			for (let b in recycle_dirs()) {
+				let files = 0, bytes = 0;
+				if (b.dir) {
+					let r = split(trim(sh(`find ${shq(b.dir)} -type f 2>/dev/null | wc -l; du -sk ${shq(b.dir)} 2>/dev/null | cut -f1`)), '\n');
+					files = int(r[0] ?? 0) || 0;
+					bytes = (int(r[1] ?? 0) || 0) * 1024;
+				}
+				push(out, { id: b.id, name: b.name, files: files, bytes: files ? bytes : 0 });
+			}
+			return { bins: out };
+		}
+	},
+
+	// permanently delete everything in one share's recycle bin (id), or in all of them (id '')
+	recycle_empty: {
+		args: { id: 'id' },
+		call: function(req) {
+			let id = req.args.id ?? '';
+			let dirs = filter(recycle_dirs(), (b) => b.dir && (id == '' || b.id == id));
+			if (id != '' && !length(dirs)) return { error: 'That share has no recycle bin.' };
+			let names = join(', ', map(dirs, (b) => b.name));
+			let cmd = join('; ', map(dirs, (b) => `find ${shq(b.dir)} -mindepth 1 -maxdepth 1 -exec rm -rf {} +`));
+			if (length(dirs))
+				system(`(${cmd}; logger -t nas-recycle ${shq('emptied from the dashboard: ' + names)}) >/dev/null 2>&1 &`);
+			return { ok: true, count: length(dirs) };
+		}
+	},
+
 	// recycle bin: days deleted files are kept (0 = never emptied). Read by nas-recycle-clean.
 	recycle_set: {
-		args: { days: 0 },
+		args: { days: 0, enabled: true },
 		call: function(req) {
-			let d = req.args.days;
+			let d = req.args.days, en = req.args.enabled;
 			if (type(d) != 'int' || d < 0 || d > 365)
 				return { error: 'Choose between 1 and 365 days, or Forever.' };
 			let c = cursor();
 			c.load('nas-alert');
 			if (!c.get('nas-alert', 'main')) return { error: 'The alert settings (/etc/config/nas-alert) are missing.' };
 			c.set('nas-alert', 'main', 'recycle_days', `${d}`);
+			if (type(en) == 'bool') c.set('nas-alert', 'main', 'recycle', en ? '1' : '0');
 			c.commit('nas-alert');
+			if (type(en) == 'bool') {
+				/* apply the global switch to every share, keeping each share's own choice */
+				let s4 = cursor();
+				s4.load('samba4');
+				s4.foreach('samba4', 'sambashare', (s) => {
+					if (s.nas_usb == '1') return;
+					apply_recycle(s4, s['.name'], share_wants_recycle(s), s.timemachine == '1', en);
+				});
+				s4.commit('samba4');
+				reload_samba();
+			}
 			return { ok: true, days: d };
 		}
 	},
+
 
 	// Wake-on-LAN on/off: read by nas-poweroff at the next power-off
 	wol_set: {

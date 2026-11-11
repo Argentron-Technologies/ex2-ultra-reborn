@@ -154,6 +154,9 @@ Trust them over forum posts, and over your own assumptions.
   This needs `mdio-tools` and `kmod-mdio-netlink`.
 - Idle power-off (`nas-watch` `check_idle`) uses `/sys/block/md1/stat` read and write
   counters, plus no SMB connections and no RAID sync. Off by default (`idle_poweroff_hours 0`).
+- Recycle bin: per-share choice in samba4 `nas_recycle` (older shares: only `vfs_objects=recycle`), global
+  switch `nas-alert.main.recycle` (unset = on), days `nas-alert.main.recycle_days`. `apply_recycle()` in
+  luci.nas sets `vfs_objects` from these; never on Time Machine shares.
 - Wake-on-LAN can be switched off on the dashboard (`nas-alert.main.wol 0`; unset = on). Then
   `nas-poweroff` disarms the PHY (`wol d`) and the init script skips the MCU's WOLStatusEnable.
 

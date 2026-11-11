@@ -9,7 +9,8 @@
 					"users_list",
 					"shares_list",
 					"cold_status",
-					"cold_deletes"
+					"cold_deletes",
+					"recycle_bins"
 				]
 			},
 			"uci": [
@@ -32,6 +33,8 @@
 					"idle_poweroff_set",
 					"wol_set",
 					"recycle_set",
+					"disk_sleep_set",
+					"recycle_empty",
 					"cold_start",
 					"cold_confirm",
 					"cold_cancel"
