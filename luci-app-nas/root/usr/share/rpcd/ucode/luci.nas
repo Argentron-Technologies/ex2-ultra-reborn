@@ -364,6 +364,9 @@ function services_info() {
 	let off_h = c.get('nas-alert', 'main', 'idle_poweroff_hours') ?? '48';
 	let off_n = match(off_h, /^[0-9]+$/) ? +off_h : 0;
 	let poweroff = off_n > 0 ? `${off_n} hours without use` : null;
+	// Wake-on-LAN (armed by nas-poweroff at every power-off unless switched off)
+	let wol = (c.get('nas-alert', 'main', 'wol') ?? '1') != '0';
+	let last = trim(split(readfile('/etc/nas-poweroff.last') ?? '', '\n')[0] ?? '');
 	return [
 		{ id: 'smb',  name: 'File sharing (SMB)', state: running('samba4') ? 'running' : 'stopped' },
 		{ id: 'tm',   name: 'Time Machine',       state: !tm ? 'off' : (running('samba4') ? 'running' : 'stopped') },
@@ -372,7 +375,9 @@ function services_info() {
 		{ id: 'fan',  name: 'Fan control',        state: running('nas-fan') ? 'auto' : 'stopped' },
 		{ id: 'recycle', name: 'Recycle bin (30 days)', state: recycle ? 'idle' : 'off' },
 		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle },
-		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff, hours: off_n }
+		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff, hours: off_n },
+		{ id: 'wol', name: 'Wake-on-LAN', state: wol ? 'idle' : 'off',
+		  mac: trim(readfile('/sys/class/net/eth0/address') ?? ''), last: length(last) ? last : null }
 	];
 }
 
@@ -743,6 +748,20 @@ const methods = {
 			c.set('nas-alert', 'main', 'idle_poweroff_hours', `${h}`);
 			c.commit('nas-alert');
 			return { ok: true, hours: h };
+		}
+	},
+
+	// Wake-on-LAN on/off: read by nas-poweroff at the next power-off
+	wol_set: {
+		args: { enabled: false },
+		call: function(req) {
+			if (type(req.args.enabled) != 'bool') return { error: 'Missing on/off value.' };
+			let c = cursor();
+			c.load('nas-alert');
+			if (!c.get('nas-alert', 'main')) return { error: 'The alert settings (/etc/config/nas-alert) are missing.' };
+			c.set('nas-alert', 'main', 'wol', req.args.enabled ? '1' : '0');
+			c.commit('nas-alert');
+			return { ok: true, enabled: req.args.enabled };
 		}
 	},
 

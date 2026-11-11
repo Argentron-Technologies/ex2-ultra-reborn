@@ -355,9 +355,9 @@ return view.extend({
 				]);
 				return E('div', { class: 'nas-list-row' }, [
 					E('span', {}, _(s.name)),
-					s.id == 'poweroff'
-						? E('button', { class: 'nas-chip nas-chip-btn', title: _('Change idle power-off'),
-							click: () => this.idlePoweroff(s.hours || 0) }, [ state, nas.icon('edit', 'nas-ico') ])
+					s.id == 'poweroff' || s.id == 'wol'
+						? E('button', { class: 'nas-chip nas-chip-btn', title: s.id == 'wol' ? _('Wake-on-LAN settings') : _('Change idle power-off'),
+							click: () => s.id == 'wol' ? this.wol(s) : this.idlePoweroff(s.hours || 0) }, [ state, nas.icon('edit', 'nas-ico') ])
 						: state
 				]);
 			}))
@@ -772,6 +772,53 @@ return view.extend({
 							nas.notify(_('Renamed. Finder and Windows show the new name within a minute.'));
 							setTimeout(() => this.refresh(), 4000);
 						}
+					});
+				}) }, _('Save'))
+			])
+		]);
+	},
+
+	wol(s) {
+		const mac = s.mac || '—';
+		const on = E('input', { type: 'checkbox', checked: s.state != 'off' ? '' : null });
+		const err = E('div', { class: 'nas-error' });
+		const code = (t) => E('code', { style: 'font-family:var(--nas-mono);user-select:all' }, t);
+
+		/* /etc/nas-poweroff.last: "<date> <time> Wake-on-LAN: ... (armed)" or "... (WARNING: not armed)" or "... off" */
+		let last = _('The NAS has not been powered off from this dashboard yet.');
+		if (s.last) {
+			const when = s.last.split(' ').slice(0, 2).join(' ');
+			last = s.last.indexOf('(armed)') >= 0 ? _('Last power-off (%s): Wake-on-LAN was armed.').format(when)
+				: s.last.indexOf('not armed') >= 0 ? _('Last power-off (%s): Wake-on-LAN could NOT be armed. Check the log: logread | grep nas-poweroff').format(when)
+				: _('Last power-off (%s): Wake-on-LAN was off.').format(when);
+		}
+
+		ui.showModal(_('Wake-on-LAN'), [
+			E('div', { class: 'nas-form' }, [
+				E('label', { class: 'nas-switch' }, [ on, E('div', {}, [
+					E('b', {}, _('Wake the NAS over the network')),
+					E('span', {}, _('After Shut down or an idle power-off, a Wake-on-LAN packet switches the NAS back on. When this is off, only replugging the power cable starts it.')) ]) ]),
+				nas.field(_('MAC address'), E('div', { style: 'font-size:16px' }, code(mac)), _('The address Wake-on-LAN apps ask for.')),
+				E('table', { class: 'nas-small', style: 'width:100%;border-collapse:collapse' }, [
+					[ _('Mac / Linux'), 'mac/wake-nas ' + mac ],
+					[ _('Windows'), '.\\windows\\wake-nas.cmd ' + mac ],
+					[ _('Phone'), _('Any Wake-on-LAN app, with the MAC address above') ]
+				].map((r) => E('tr', {}, [
+					E('td', { class: 'nas-muted', style: 'padding:4px 12px 4px 0;white-space:nowrap;vertical-align:top' }, r[0]),
+					E('td', { style: 'padding:4px 0' }, r[1].indexOf(mac) >= 0 ? code(r[1]) : r[1])
+				])))
+			]),
+			E('p', { class: 'nas-muted nas-small', style: 'margin-top:14px' }, last),
+			err,
+			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
+					return nas.callWolSet(on.checked).then((res) => {
+						if (res && res.error) { err.textContent = res.error; return; }
+						ui.hideModal();
+						nas.notify(on.checked ? _('Wake-on-LAN is on: the NAS can be woken over the network after a power-off.')
+							: _('Wake-on-LAN is off: after a power-off, replug the power cable to start the NAS.'));
+						this.refresh();
 					});
 				}) }, _('Save'))
 			])

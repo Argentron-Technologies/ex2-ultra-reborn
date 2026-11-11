@@ -22,9 +22,11 @@ stop() {
 	# overlay read-only ("umount -a -r"), in which case this line is simply not saved.
 	echo "$(date '+%F %T') K99: 18_3=$(mdio f1072004.mdio-mii mva 0 raw 3:18 2>/dev/null) 18_0=$(mdio f1072004.mdio-mii mva 0 raw 0:18 2>/dev/null) 16_17=$(mdio f1072004.mdio-mii mva 0 raw 17:16 2>/dev/null)" >> /etc/nas-poweroff.last 2>/dev/null
 	sync
-	stty -F /dev/ttyS1 19200 raw -echo -crtscts cs8 -cstopb -parenb 2>/dev/null
-	printf "\xFA\x03\x0a\x01\x00\x00\xFB" > /dev/ttyS1   # MCU: WOLStatusEnable (WD up_send_ctl table)
-	sleep 1
+	if [ "$(uci -q get nas-alert.main.wol)" != 0 ]; then
+		stty -F /dev/ttyS1 19200 raw -echo -crtscts cs8 -cstopb -parenb 2>/dev/null
+		printf "\xFA\x03\x0a\x01\x00\x00\xFB" > /dev/ttyS1   # MCU: WOLStatusEnable (WD up_send_ctl table)
+		sleep 1
+	fi
 	stty -F /dev/ttyS1 19200 raw -echo -crtscts cs8 -cstopb -parenb 2>/dev/null
 	printf "\xFA\x03\x03\x01\x01\x$(printf %02x $DELAY)\xFB" > /dev/ttyS1
 	logger -t nas-poweroff "MCU will cut power in $DELAY s"

@@ -52,6 +52,10 @@ On a Mac, `dns-sd -B _adisk._tcp` should list the NAS (Time Machine discovery).
   | Windows | `.\windows\wake-nas.cmd <MAC>` |
   | Phone | Any Wake-on-LAN app |
 
+- **Wake-on-LAN** is on by default. Click **Wake-on-LAN** on the dashboard's **Services** card
+  to see the MAC address, the wake commands and whether it was armed at the last power-off,
+  or to switch it off (then only replugging the power starts the NAS).
+
 - **Idle power-off** is off by default. To switch the NAS off after a while with no file
   activity, no SMB connection and no RAID sync, click **Idle power-off** on the dashboard's
   **Services** card and choose a time (12 hours to 1 week). From the command line:

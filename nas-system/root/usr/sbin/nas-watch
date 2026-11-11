@@ -166,8 +166,13 @@ check_idle() {
 	[ $idle -lt $(( h * 3600 )) ] && return
 	logger -t nas-watch "idle for $(hours_min $idle): powering off"
 	/usr/sbin/nas-alert clear idle_off
+	if [ "$(cfg wol)" = 0 ]; then
+		wake="Wake-on-LAN is switched off, so unplug and replug the power cable to start it again."
+	else
+		wake="It wakes up by itself when your Mac needs it for Time Machine.\nTo wake it yourself: use a Wake-on-LAN app (MAC $(cat /sys/class/net/$NET/address)), run mac/wake-nas on your Mac, or unplug and replug the power cable."
+	fi
 	alert idle_off "NAS powered off after $h hours without use" \
-"Nobody read or wrote files on the NAS for $h hours, so it has powered itself off to save power.\n\nIt wakes up by itself when your Mac needs it for Time Machine.\nTo wake it yourself: use a Wake-on-LAN app (MAC $(cat /sys/class/net/$NET/address)), run mac/wake-nas on your Mac, or unplug and replug the power cable." 0
+"Nobody read or wrote files on the NAS for $h hours, so it has powered itself off to save power.\n\n$wake" 0
 	sync
 	/usr/sbin/nas-poweroff idle
 }

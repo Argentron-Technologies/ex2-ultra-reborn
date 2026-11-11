@@ -305,6 +305,7 @@ return baseclass.extend({
 	callUsbEject: rpc.declare({ object: 'luci.nas', method: 'usb_eject', params: [ 'dev' ] }),
 	callNamesSet: rpc.declare({ object: 'luci.nas', method: 'names_set', params: [ 'name', 'hostname' ] }),
 	callIdlePoweroffSet: rpc.declare({ object: 'luci.nas', method: 'idle_poweroff_set', params: [ 'hours' ] }),
+	callWolSet: rpc.declare({ object: 'luci.nas', method: 'wol_set', params: [ 'enabled' ] }),
 	callColdStatus: rpc.declare({ object: 'luci.nas', method: 'cold_status' }),
 	callColdDeletes: rpc.declare({ object: 'luci.nas', method: 'cold_deletes' }),
 	callColdStart: rpc.declare({ object: 'luci.nas', method: 'cold_start', params: [ 'mode', 'mount', 'folders' ] }),

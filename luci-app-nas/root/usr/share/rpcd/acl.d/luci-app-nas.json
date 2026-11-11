@@ -30,6 +30,7 @@
 					"names_set",
 					"power",
 					"idle_poweroff_set",
+					"wol_set",
 					"cold_start",
 					"cold_confirm",
 					"cold_cancel"

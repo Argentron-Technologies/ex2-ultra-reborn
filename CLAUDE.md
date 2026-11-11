@@ -154,6 +154,8 @@ Trust them over forum posts, and over your own assumptions.
   This needs `mdio-tools` and `kmod-mdio-netlink`.
 - Idle power-off (`nas-watch` `check_idle`) uses `/sys/block/md1/stat` read and write
   counters, plus no SMB connections and no RAID sync. Off by default (`idle_poweroff_hours 0`).
+- Wake-on-LAN can be switched off on the dashboard (`nas-alert.main.wol 0`; unset = on). Then
+  `nas-poweroff` disarms the PHY (`wol d`) and the init script skips the MCU's WOLStatusEnable.
 
 **Disks and RAID**
 - WD layout per disk: p1 = swap (one md array per disk, metadata 1.2), p2 = data (RAID 1
