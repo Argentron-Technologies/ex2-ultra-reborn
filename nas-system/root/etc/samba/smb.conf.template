@@ -4,7 +4,7 @@
 	recycle:keeptree = yes
 	recycle:versions = yes
 	recycle:touch_mtime = yes
-	recycle:directory_mode = 0777
+	recycle:directory_mode = 0755
 	recycle:exclude = .DS_Store,._*,~$*,*.tmp,*.temp,Thumbs.db,desktop.ini
 	recycle:exclude_dir = .recycle,.TemporaryItems,.Trashes
 	multicast dns register = no

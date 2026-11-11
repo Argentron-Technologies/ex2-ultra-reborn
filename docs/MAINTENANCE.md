@@ -118,6 +118,36 @@ You get an e-mail when the rebuild starts and when it finishes.
 > The processor idles around 70 °C. That's normal for this chip, which has no power-saving
 > idle mode in Linux.
 
+## Security
+
+The NAS is built for a trusted home network. What protects your files:
+
+- **Samba decides who gets in.** Each share lists the users who may open it, read-only or
+  read-write, and every user needs a password. New passwords must be at least 8 characters.
+- **Only `root` can log in to the NAS.** The users you add are Samba-only: they have no shell
+  and can't use SSH.
+- **Nothing faces the internet.** No public IPv6, no cloud, no port forwarding. Keep it that
+  way: don't forward ports 445 or 22 to the NAS on your router.
+
+What it does *not* do is lock files per user on the NAS itself. Samba writes every file as
+`root` (`force_root`), so the folder permissions on disk aren't what keeps people apart. Anyone
+with root access to the NAS can read everything, as on any NAS.
+
+New shares create files as `0644` and folders as `0755`. Shares and folders made by older
+versions used `0666`/`0777`; running `setup.sh code` (or `install`) switches existing shares to
+the new modes for files written from then on. Folders that already exist keep their modes. To
+tighten one as well (safe: Samba ignores these bits for access):
+
+```sh
+nas# chmod -R go-w /mnt/data/<folder>
+```
+
+USB drives stay at `0666`/`0777` on purpose, so the drive still works when you plug it into
+another computer.
+
+User and password changes are saved in one step (written to a new file, then swapped in), so a
+power cut while you add or delete a user can't leave `/etc/passwd` or `/etc/shadow` half-written.
+
 ## Troubleshooting
 
 | Symptom | Fix |

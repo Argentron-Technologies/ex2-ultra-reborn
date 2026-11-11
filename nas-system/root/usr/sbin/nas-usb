@@ -58,6 +58,7 @@ add() {
 			return 0
 		fi
 	fi
+	# open modes on purpose: the drive should stay usable when plugged into another computer
 	[ "$type" = ext2 ] || [ "$type" = ext3 ] || [ "$type" = ext4 ] && chmod 0777 "$mp"
 
 	sec="usb_$dev"; rov=no; [ -n "$ro" ] && rov=yes

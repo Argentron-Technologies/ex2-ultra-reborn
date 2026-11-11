@@ -112,6 +112,9 @@ Updates: edit, then `./setup.sh update` (Windows: `.\setup.cmd update`). OpenWrt
   disk on its own (that would silently split the mirror).
 - The microcontroller (fan and power) only receives the commands WD's own firmware sends.
 - No secrets live in this repo: the alert e-mail password stays on the NAS.
+- Built for a trusted home network: Samba checks who may open each share, but on the NAS itself
+  the files aren't locked per user. Don't expose it to the internet. See
+  [Security](docs/MAINTENANCE.md#security).
 
 Tested on OpenWrt 25.12.5 and 25.12.6. Found a problem?
 [Open an issue](https://github.com/Argentron-Technologies/ex2-ultra-reborn/issues).

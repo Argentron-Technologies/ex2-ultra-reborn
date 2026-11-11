@@ -50,7 +50,7 @@ return view.extend({
 	},
 
 	passwordInputs() {
-		const pw = E('input', { type: 'password', autocomplete: 'new-password', placeholder: _('At least 4 characters') });
+		const pw = E('input', { type: 'password', autocomplete: 'new-password', placeholder: _('At least 8 characters') });
 		const pw2 = E('input', { type: 'password', autocomplete: 'new-password', placeholder: _('Type it again') });
 		return [ pw, pw2 ];
 	},

@@ -227,6 +227,21 @@ cmd_code() {
 	(cd "$HERE/luci-theme-nasos/ucode/template" && tar -X "$EXCL" -cf - themes/nasos) | on 'mkdir -p /usr/share/ucode/luci/template && tar -x -o -f - -C /usr/share/ucode/luci/template'
 	(cd "$HERE/luci-theme-nasos/root" && tar -X "$EXCL" -cf - etc) | on 'tar -x -o -f - -C / && sh /etc/uci-defaults/30_luci-theme-nasos && rm -f /etc/uci-defaults/30_luci-theme-nasos'
 	fix_files
+	share_masks
+}
+
+# Shares made by older versions created new files as 0666 and folders as 0777 (writable by every
+# account on the NAS). Samba writes as root (force_root), so 0644/0755 lose nothing. Only new files
+# and folders get them; existing data is left as it is. USB drives keep 0666/0777 (see nas-usb).
+share_masks() {
+	on 'ch=; for s in $(uci -q -X show samba4 | sed -n "s/^samba4\.\([^.=]*\)=sambashare$/\1/p"); do
+		[ "$(uci -q get samba4.$s.nas_usb)" = 1 ] && continue
+		[ "$(uci -q get samba4.$s.create_mask)" = 0666 ] && { uci set samba4.$s.create_mask=0644; ch=1; }
+		[ "$(uci -q get samba4.$s.dir_mask)" = 0777 ] && { uci set samba4.$s.dir_mask=0755; ch=1; }
+	done
+	t=/etc/samba/smb.conf.template
+	grep -q "recycle:directory_mode = 0777" $t 2>/dev/null && { sed -i "s/recycle:directory_mode = 0777/recycle:directory_mode = 0755/" $t; ch=1; }
+	[ -z "$ch" ] || { uci commit samba4; /etc/init.d/samba4 reload >/dev/null 2>&1; }; true'
 }
 
 # Owner and leftovers. Files copied from a Mac or Linux PC used to keep that PC's user ID as their owner (tar

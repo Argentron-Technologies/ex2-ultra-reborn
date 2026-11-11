@@ -2,7 +2,7 @@
 // Loaded by rpcd (rpcd-mod-ucode) as ubus object "luci.nas".
 'use strict';
 
-import { popen, readfile, writefile, lsdir, stat, lstat, mkdir, readlink } from 'fs';
+import { popen, readfile, writefile, open, lsdir, stat, lstat, mkdir, readlink, chmod, chown, rename, unlink } from 'fs';
 import { cursor } from 'uci';
 
 const DATA = '/mnt/data';
@@ -285,7 +285,7 @@ function valid_username(name) {
 }
 
 function valid_password(pw) {
-	return type(pw) == 'string' && length(pw) >= 4 && length(pw) <= 128 &&
+	return type(pw) == 'string' && length(pw) >= 8 && length(pw) <= 128 &&
 		index(pw, '\n') < 0 && index(pw, '\r') < 0;
 }
 
@@ -297,13 +297,28 @@ function set_smb_password(name, pw) {
 	return !!smb_users()[name];
 }
 
+/* Replace a file in one step: write a copy next to it (same owner and mode, so /etc/shadow is never
+ * readable by others), flush it to flash, then rename it over the original. A power cut leaves either
+ * the old file or the new one, never a half-written /etc/passwd or /etc/shadow. */
+function write_atomic(path, data) {
+	let st = stat(path), tmp = path + '.nas-new';
+	let f = open(tmp, 'w');
+	if (!f) return false;
+	if (st) { chmod(tmp, st.mode); chown(tmp, st.uid, st.gid); }
+	let ok = f.write(data) == length(data);
+	f.close();
+	system('sync');
+	if (!ok || !rename(tmp, path)) { unlink(tmp); return false; }
+	return true;
+}
+
 function remove_lines(path, name) {
 	let content = readfile(path);
 	if (content == null) return;
 	let keep = [];
 	for (let l in split(content, '\n'))
 		if (length(l) && index(l, name + ':') != 0) push(keep, l);
-	writefile(path, join('\n', keep) + '\n');
+	write_atomic(path, join('\n', keep) + '\n');
 }
 
 function strip_user_from_shares(name) {
@@ -607,7 +622,7 @@ const methods = {
 			if (!valid_username(name))
 				return { error: 'Use lowercase letters, digits, _ or -, starting with a letter (max 32).' };
 			if (!valid_password(pw))
-				return { error: 'The password must be at least 4 characters.' };
+				return { error: 'The password must be at least 8 characters.' };
 
 			let entries = passwd_entries();
 			let existing = filter(entries, (e) => e.name == name)[0];
@@ -619,10 +634,11 @@ const methods = {
 				for (let e in entries)
 					if (e.uid >= uid && e.uid < 60000) uid = e.uid + 1;
 				let pf = readfile('/etc/passwd') ?? '', sf = readfile('/etc/shadow') ?? '', gf = readfile('/etc/group') ?? '';
-				writefile('/etc/passwd', pf + `${name}:x:${uid}:${uid}:NAS user:/var:/bin/false\n`);
-				writefile('/etc/shadow', sf + `${name}:*:0:0:99999:7:::\n`);
+				if (!write_atomic('/etc/passwd', pf + `${name}:x:${uid}:${uid}:NAS user:/var:/bin/false\n`) ||
+				    !write_atomic('/etc/shadow', sf + `${name}:*:0:0:99999:7:::\n`))
+					return { error: 'Could not save the new user.' };
 				if (!match(gf, regexp(`(^|\\n)${name}:`)))
-					writefile('/etc/group', gf + `${name}:x:${uid}:\n`);
+					write_atomic('/etc/group', gf + `${name}:x:${uid}:\n`);
 			}
 
 			if (!set_smb_password(name, pw))
@@ -637,7 +653,7 @@ const methods = {
 			let name = req.args.name, pw = req.args.password;
 			let e = filter(passwd_entries(), (x) => x.name == name)[0];
 			if (!e || !is_nas_user(e)) return { error: 'Unknown user.' };
-			if (!valid_password(pw)) return { error: 'The password must be at least 4 characters.' };
+			if (!valid_password(pw)) return { error: 'The password must be at least 8 characters.' };
 			if (!set_smb_password(name, pw)) return { error: 'Could not set the password.' };
 			return { ok: true };
 		}
@@ -677,8 +693,9 @@ const methods = {
 			let path = `${DATA}/${a.folder}`;
 			if (!stat(path)) {
 				if (!a.create) return { error: 'That folder does not exist.' };
-				if (!mkdir(path, 0o777)) return { error: 'Could not create the folder.' };
-				system(`chmod 0777 ${shq(path)}`);
+				/* Samba writes everything as root (force_root) and checks access itself, so others need no write bit */
+				if (!mkdir(path, 0o755)) return { error: 'Could not create the folder.' };
+				chmod(path, 0o755);
 			}
 
 			let c = cursor();
@@ -706,8 +723,8 @@ const methods = {
 			c.set('samba4', id, 'read_only', 'no');
 			c.set('samba4', id, 'browseable', 'yes');
 			c.set('samba4', id, 'force_root', '1');
-			c.set('samba4', id, 'create_mask', '0666');
-			c.set('samba4', id, 'dir_mask', '0777');
+			c.set('samba4', id, 'create_mask', '0644');
+			c.set('samba4', id, 'dir_mask', '0755');
 			c.set('samba4', id, 'guest_ok', a.guest ? 'yes' : 'no');
 
 			let all = [ ...rw, ...ro ];
