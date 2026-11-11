@@ -57,6 +57,8 @@ On a Mac, `dns-sd -B _adisk._tcp` should list the NAS (Time Machine discovery).
   ```sh
   nas# uci set nas-alert.main.idle_poweroff_hours=48; uci commit nas-alert
   ```
+  The dashboard's **Services** card shows the setting (*Idle power-off: Off*, or *After 48
+  hours without use*). Set it back to `0` to turn it off.
   On a Mac that backs up with Time Machine, `mac/install-wake-agent.sh <NAS MAC> nas.local`
   wakes the NAS whenever a backup is due.
 

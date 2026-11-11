@@ -360,6 +360,9 @@ function services_info() {
 	c.foreach('hd-idle', 'hd-idle', (s) => {
 		if (s.enabled == '1') idle = (s.idle_time_interval ?? '') + ' ' + (s.idle_time_unit ?? 'minutes');
 	});
+	// idle power-off (nas-watch): unset means 48 hours, 0 means never
+	let off_h = c.get('nas-alert', 'main', 'idle_poweroff_hours') ?? '48';
+	let poweroff = match(off_h, /^[0-9]+$/) && +off_h > 0 ? `${+off_h} hours without use` : null;
 	return [
 		{ id: 'smb',  name: 'File sharing (SMB)', state: running('samba4') ? 'running' : 'stopped' },
 		{ id: 'tm',   name: 'Time Machine',       state: !tm ? 'off' : (running('samba4') ? 'running' : 'stopped') },
@@ -367,7 +370,8 @@ function services_info() {
 		{ id: 'wsd',  name: 'Windows discovery',  state: running('wsdd2') ? 'running' : 'stopped' },
 		{ id: 'fan',  name: 'Fan control',        state: running('nas-fan') ? 'auto' : 'stopped' },
 		{ id: 'recycle', name: 'Recycle bin (30 days)', state: recycle ? 'idle' : 'off' },
-		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle }
+		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle },
+		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff }
 	];
 }
 
