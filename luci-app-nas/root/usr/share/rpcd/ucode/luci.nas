@@ -362,7 +362,8 @@ function services_info() {
 	});
 	// idle power-off (nas-watch): unset means 48 hours, 0 means never
 	let off_h = c.get('nas-alert', 'main', 'idle_poweroff_hours') ?? '48';
-	let poweroff = match(off_h, /^[0-9]+$/) && +off_h > 0 ? `${+off_h} hours without use` : null;
+	let off_n = match(off_h, /^[0-9]+$/) ? +off_h : 0;
+	let poweroff = off_n > 0 ? `${off_n} hours without use` : null;
 	return [
 		{ id: 'smb',  name: 'File sharing (SMB)', state: running('samba4') ? 'running' : 'stopped' },
 		{ id: 'tm',   name: 'Time Machine',       state: !tm ? 'off' : (running('samba4') ? 'running' : 'stopped') },
@@ -371,7 +372,7 @@ function services_info() {
 		{ id: 'fan',  name: 'Fan control',        state: running('nas-fan') ? 'auto' : 'stopped' },
 		{ id: 'recycle', name: 'Recycle bin (30 days)', state: recycle ? 'idle' : 'off' },
 		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle },
-		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff }
+		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff, hours: off_n }
 	];
 }
 
@@ -725,6 +726,23 @@ const methods = {
 				return { error: 'The local name may use lowercase letters, digits and - (max 15, no - at the ends).' };
 			system(`(sleep 1; /usr/sbin/nas-names set ${shq(name)} ${shq(host)}) >/dev/null 2>&1 &`);
 			return { ok: true, hostname: host };
+		}
+	},
+
+	// idle power-off: hours without use before nas-watch switches the NAS off (0 = never).
+	// nas-watch reads the value every minute, so no restart is needed.
+	idle_poweroff_set: {
+		args: { hours: 0 },
+		call: function(req) {
+			let h = req.args.hours;
+			if (type(h) != 'int' || h < 0 || h > 720)
+				return { error: 'Choose between 1 and 720 hours, or Off.' };
+			let c = cursor();
+			c.load('nas-alert');
+			if (!c.get('nas-alert', 'main')) return { error: 'The alert settings (/etc/config/nas-alert) are missing.' };
+			c.set('nas-alert', 'main', 'idle_poweroff_hours', `${h}`);
+			c.commit('nas-alert');
+			return { ok: true, hours: h };
 		}
 	},
 

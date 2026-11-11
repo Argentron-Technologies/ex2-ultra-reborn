@@ -29,6 +29,7 @@
 					"usb_eject",
 					"names_set",
 					"power",
+					"idle_poweroff_set",
 					"cold_start",
 					"cold_confirm",
 					"cold_cancel"

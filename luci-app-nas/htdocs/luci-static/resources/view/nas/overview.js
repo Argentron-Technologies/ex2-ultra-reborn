@@ -348,13 +348,19 @@ return view.extend({
 		const kind = { running: 'ok', auto: 'ok', idle: 'ok', off: 'off', stopped: 'bad' };
 		return E('section', { class: 'nas-card' }, [
 			E('div', { class: 'nas-card-head' }, [ E('h3', {}, _('Services')) ]),
-			E('div', {}, (d.services || []).map((s) => E('div', { class: 'nas-list-row' }, [
-				E('span', {}, _(s.name)),
-				E('span', { class: 'nas-state ' + kind[s.state] }, [
+			E('div', {}, (d.services || []).map((s) => {
+				const state = E('span', { class: 'nas-state ' + kind[s.state] }, [
 					E('span', { class: 'nas-led ' + kind[s.state] }),
 					s.detail ? _('After') + ' ' + s.detail : label[s.state]
-				])
-			])))
+				]);
+				return E('div', { class: 'nas-list-row' }, [
+					E('span', {}, _(s.name)),
+					s.id == 'poweroff'
+						? E('button', { class: 'nas-chip nas-chip-btn', title: _('Change idle power-off'),
+							click: () => this.idlePoweroff(s.hours || 0) }, [ state, nas.icon('edit', 'nas-ico') ])
+						: state
+				]);
+			}))
 		]);
 	},
 
@@ -772,7 +778,37 @@ return view.extend({
 		]);
 	},
 
-	setLink(s) {
+	idlePoweroff(cur) {
+		const choices = [ [ 0, _('Off') ], [ 12, _('After 12 hours') ], [ 24, _('After 1 day') ],
+			[ 48, _('After 2 days') ], [ 72, _('After 3 days') ], [ 168, _('After 1 week') ] ];
+		if (!choices.some((c) => c[0] == cur)) choices.push([ cur, _('After %d hours').format(cur) ]);
+		const sel = E('select', {}, choices.map((c) => E('option', { value: c[0], selected: c[0] == cur ? '' : null }, c[1])));
+		const err = E('div', { class: 'nas-error' });
+
+		ui.showModal(_('Idle power-off'), [
+			E('div', { class: 'nas-form' }, [
+				nas.field(_('Switch the NAS off'), sel,
+					_('Counts as idle: no files read or written, no computer connected to a share, and no mirror check or rebuild running.'))
+			]),
+			E('p', { class: 'nas-muted nas-small' }, _('The NAS really powers off. Start it again with Wake-on-LAN (the MAC address is in the e-mail it sends) or by replugging the power. A Mac with the wake agent installed wakes it for Time Machine.')),
+			err,
+			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
+					const h = parseInt(sel.value, 10);
+					return nas.callIdlePoweroffSet(h).then((res) => {
+						if (res && res.error) { err.textContent = res.error; return; }
+						ui.hideModal();
+						nas.notify(h > 0 ? _('Idle power-off is on: the NAS switches off after %d hours without use.').format(h)
+							: _('Idle power-off is off: the NAS stays on.'));
+						this.refresh();
+					});
+				}) }, _('Save'))
+			])
+		]);
+	},
+
+		setLink(s) {
 		const l = s && s.link;
 		if (!this.chart || !l) return;
 		let el;

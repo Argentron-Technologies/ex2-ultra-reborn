@@ -52,13 +52,12 @@ On a Mac, `dns-sd -B _adisk._tcp` should list the NAS (Time Machine discovery).
   | Windows | `.\windows\wake-nas.cmd <MAC>` |
   | Phone | Any Wake-on-LAN app |
 
-- **Idle power-off** is off by default. To switch the NAS off after 48 hours with no file
-  activity, no SMB connection and no RAID sync:
+- **Idle power-off** is off by default. To switch the NAS off after a while with no file
+  activity, no SMB connection and no RAID sync, click **Idle power-off** on the dashboard's
+  **Services** card and choose a time (12 hours to 1 week). From the command line:
   ```sh
-  nas# uci set nas-alert.main.idle_poweroff_hours=48; uci commit nas-alert
+  nas# uci set nas-alert.main.idle_poweroff_hours=48; uci commit nas-alert   # 0 = off
   ```
-  The dashboard's **Services** card shows the setting (*Idle power-off: Off*, or *After 48
-  hours without use*). Set it back to `0` to turn it off.
   On a Mac that backs up with Time Machine, `mac/install-wake-agent.sh <NAS MAC> nas.local`
   wakes the NAS whenever a backup is due.
 
