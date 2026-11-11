@@ -26,6 +26,9 @@ boot() {
 		[ "$(cat /sys/block/md1/md/array_state 2>/dev/null)" = clear ] && mdadm --stop /dev/md1 >/dev/null 2>&1
 		mdadm --assemble --scan --config=/var/etc/mdadm.conf >/dev/null 2>&1
 	done
+	# block-mount's hotplug handler mounts md1 by itself as soon as it appears (auto_mount):
+	# give it time to finish, so a second "block mount" doesn't collide with it (error 16, busy)
+	for i in $(seq 1 10); do grep -q " /mnt/data " /proc/mounts && break; sleep 1; done
 	grep -q " /mnt/data " /proc/mounts || block mount
 	if grep -q " /mnt/data " /proc/mounts; then
 		[ $try -gt 0 ] && logger -t nas-datamount "data mirror mounted after $try retry(s)"
