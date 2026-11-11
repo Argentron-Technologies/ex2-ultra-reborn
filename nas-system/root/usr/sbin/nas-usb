@@ -134,6 +134,10 @@ eject() {
 		rm -f $STATE/$p
 	done
 	sync
+	# spin the drive down (ATA STANDBY IMMEDIATE through the USB bridge): removing the
+	# device alone leaves USB hard drives spinning, since the port keeps powering them
+	smartctl -d sat -s standby,now /dev/$disk >/dev/null 2>&1 || hdparm -y /dev/$disk >/dev/null 2>&1
+	sleep 2
 	echo 1 > /sys/block/$disk/device/delete 2>/dev/null
 	log "$disk: ejected, safe to unplug"
 }

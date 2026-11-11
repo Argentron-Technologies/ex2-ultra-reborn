@@ -15,7 +15,7 @@ NAS: connect first with `ssh root@nas.local`.
 | **Restore a deleted file** | Open the share, show hidden files (Mac: `Cmd`+`Shift`+`.`; Windows: *View → Show → Hidden items*), open `.recycle`, drag the file back. Files are kept for 30 days. |
 | **Time Machine** | Tick **Time Machine** on a share (optionally capped in GB). On the Mac: *System Settings → General → Time Machine → Add Backup Disk*. |
 | **Rename the NAS** | Click the name chip on the dashboard. Afterwards, check that Time Machine still finds its disk. |
-| **USB drive** | Plug it in and it's shared as `smb://nas.local/<label>`. Eject it from the dashboard. FAT32, exFAT, NTFS and ext all work. |
+| **USB drive** | Plug it in and it's shared as `smb://nas.local/<label>`. Eject it from the dashboard: a USB hard drive also spins down, so it can be unplugged safely. FAT32, exFAT, NTFS and ext all work. |
 | **Test e-mail alerts** | `nas# nas-alert test`. Retry queued mail with `nas# nas-alert flush`. Limits are in `/etc/config/nas-alert`. |
 
 ## Health check
