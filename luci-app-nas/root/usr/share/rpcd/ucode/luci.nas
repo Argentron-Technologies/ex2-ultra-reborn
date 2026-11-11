@@ -320,6 +320,7 @@ function share_list() {
 			guest: s.guest_ok == 'yes',
 			timemachine: s.timemachine == '1',
 			tm_cap: s.timemachine_maxsize ? int(s.timemachine_maxsize) : null,
+			recycle: index(s.vfs_objects ?? '', 'recycle') >= 0,
 			exists: !!stat(s.path ?? '')
 		});
 	});
@@ -370,6 +371,9 @@ function services_info() {
 	let poweroff = off_n > 0 ? `${off_n} hours without use` : null;
 	// Wake-on-LAN (armed by nas-poweroff at every power-off unless switched off)
 	let wol = (c.get('nas-alert', 'main', 'wol') ?? '1') != '0';
+	// recycle bin: days kept before nas-recycle-clean empties it (0 = never)
+	let rd = c.get('nas-alert', 'main', 'recycle_days') ?? '30';
+	let rdays = match(rd, /^[0-9]+$/) ? +rd : 30;
 	let last = trim(split(readfile('/etc/nas-poweroff.last') ?? '', '\n')[0] ?? '');
 	return [
 		{ id: 'smb',  name: 'File sharing (SMB)', state: running('samba4') ? 'running' : 'stopped' },
@@ -377,7 +381,8 @@ function services_info() {
 		{ id: 'mdns', name: 'Mac discovery',      state: running('avahi-daemon') ? 'running' : 'stopped' },
 		{ id: 'wsd',  name: 'Windows discovery',  state: running('wsdd2') ? 'running' : 'stopped' },
 		{ id: 'fan',  name: 'Fan control',        state: running('nas-fan') ? 'auto' : 'stopped' },
-		{ id: 'recycle', name: 'Recycle bin (30 days)', state: recycle ? 'idle' : 'off' },
+		{ id: 'recycle', name: 'Recycle bin', state: recycle ? 'idle' : 'off', days: rdays,
+		  text: recycle ? (rdays > 0 ? `Keeps ${rdays} days` : 'Keeps forever') : null },
 		{ id: 'idle', name: 'Disk sleep',         state: idle ? 'idle' : 'off', detail: idle },
 		{ id: 'poweroff', name: 'Idle power-off', state: poweroff ? 'idle' : 'off', detail: poweroff, hours: off_n },
 		{ id: 'wol', name: 'Wake-on-LAN', state: wol ? 'idle' : 'off',
@@ -625,7 +630,7 @@ const methods = {
 	},
 
 	share_save: {
-		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0 },
+		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0, recycle: true },
 		call: function(req) {
 			let a = req.args;
 			if (!valid_share_name(a.name))
@@ -676,8 +681,9 @@ const methods = {
 			else c.delete('samba4', id, 'read_list');
 			c.delete('samba4', id, 'write_list');
 
-			/* recycle bin on every share except Time Machine (it deletes old backup bands constantly) */
-			if (a.timemachine) c.delete('samba4', id, 'vfs_objects');
+			/* recycle bin: on unless switched off for this share; never on Time Machine shares
+			 * (Time Machine deletes old backup bands constantly) */
+			if (a.timemachine || a.recycle === false) c.delete('samba4', id, 'vfs_objects');
 			else c.set('samba4', id, 'vfs_objects', 'recycle');
 
 			if (a.timemachine) {
@@ -752,6 +758,22 @@ const methods = {
 			c.set('nas-alert', 'main', 'idle_poweroff_hours', `${h}`);
 			c.commit('nas-alert');
 			return { ok: true, hours: h };
+		}
+	},
+
+	// recycle bin: days deleted files are kept (0 = never emptied). Read by nas-recycle-clean.
+	recycle_set: {
+		args: { days: 0 },
+		call: function(req) {
+			let d = req.args.days;
+			if (type(d) != 'int' || d < 0 || d > 365)
+				return { error: 'Choose between 1 and 365 days, or Forever.' };
+			let c = cursor();
+			c.load('nas-alert');
+			if (!c.get('nas-alert', 'main')) return { error: 'The alert settings (/etc/config/nas-alert) are missing.' };
+			c.set('nas-alert', 'main', 'recycle_days', `${d}`);
+			c.commit('nas-alert');
+			return { ok: true, days: d };
 		}
 	},
 

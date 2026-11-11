@@ -12,10 +12,11 @@ NAS: connect first with `ssh root@nas.local`.
 | Task | How |
 |---|---|
 | **Add a user or share** | Dashboard → **Users** / **Shares**. New shares get a recycle bin; Time Machine shares don't. |
-| **Restore a deleted file** | Open the share, show hidden files (Mac: `Cmd`+`Shift`+`.`; Windows: *View → Show → Hidden items*), open `.recycle`, drag the file back. Files are kept for 30 days. |
+| **Restore a deleted file** | Open the share, show hidden files (Mac: `Cmd`+`Shift`+`.`; Windows: *View → Show → Hidden items*), open `.recycle`, drag the file back. Files are kept for 30 days by default. |
 | **Time Machine** | Tick **Time Machine** on a share (optionally capped in GB). On the Mac: *System Settings → General → Time Machine → Add Backup Disk*. |
 | **Rename the NAS** | Click the name chip on the dashboard. Afterwards, check that Time Machine still finds its disk. |
 | **USB drive** | Plug it in and it's shared as `smb://nas.local/<label>`. Eject it from the dashboard: a USB hard drive also spins down, so it can be unplugged safely. FAT32, exFAT, NTFS and ext all work. |
+| **Recycle bin settings** | Dashboard → **Services** card → **Recycle bin**: keep deleted files 7 to 90 days, or forever. Switch it on or off per share when editing a share. |
 | **Test e-mail alerts** | `nas# nas-alert test`. Retry queued mail with `nas# nas-alert flush`. Limits are in `/etc/config/nas-alert`. |
 
 ## Health check
@@ -146,6 +147,6 @@ You get an e-mail when the rebuild starts and when it finishes.
 | USB sharing | `nas-usb` | drives mount at `/mnt/usb/<label>` |
 | Cold-storage copies | `nas-coldsync` | dashboard card |
 | Names | `nas-names` | `/etc/avahi/services/nas.service` |
-| Recycle-bin cleanup | `nas-recycle-clean` | cron, Sundays 04:30 |
+| Recycle-bin cleanup | `nas-recycle-clean` | cron, Sundays 04:30; days from `nas-alert.main.recycle_days` |
 
 </details>

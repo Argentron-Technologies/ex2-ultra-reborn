@@ -1,8 +1,13 @@
 #!/bin/sh
-# nas-recycle-clean: empty recycle-bin files older than DAYS (default 30).
-# Runs weekly from cron. Deleted files land in <share>/.recycle (Samba vfs recycle,
-# enabled on every share except Time Machine).
-DAYS=${1:-30}
+# nas-recycle-clean: empty recycle-bin files older than DAYS.
+# Runs weekly from cron. Deleted files land in <share>/.recycle (Samba vfs recycle, on per
+# share in the dashboard, never on Time Machine shares).
+# DAYS comes from the dashboard setting (nas-alert.main.recycle_days; 0 = keep forever),
+# else from the first argument, else 30.
+DAYS=$(uci -q get nas-alert.main.recycle_days)
+[ -n "$DAYS" ] || DAYS=${1:-30}
+case "$DAYS" in ''|*[!0-9]*) logger -t nas-recycle "invalid recycle_days '$DAYS', using 30"; DAYS=30 ;; esac
+[ "$DAYS" -eq 0 ] && { logger -t nas-recycle "recycle bins are kept forever (recycle_days 0): nothing removed"; exit 0; }
 n=0
 for sec in $(uci -q show samba4 | sed -n "s/^samba4\.\([^.]*\)\.vfs_objects='.*recycle.*'$/\1/p"); do
 	p=$(uci -q get samba4.$sec.path)/.recycle

@@ -47,7 +47,7 @@ $env:NAS = "192.168.1.50"        # PowerShell: remembered for this window
 | **Find it** | File Explorer → **Network**, or type `\\nas.local` (or `\\<NAS IP>`) in the address bar |
 | **Sign in** | With a user from the dashboard's **Users** page (not `root`) |
 | **Drive letter** | Right-click a share → **Map network drive…** → tick *Reconnect at sign-in* |
-| **Deleted a file?** | Every share except Time Machine has a hidden `.recycle` folder (*View → Show → Hidden items*); files stay there 30 days |
+| **Deleted a file?** | Shares with the recycle bin on (the default) have a hidden `.recycle` folder (*View → Show → Hidden items*); files stay there 30 days unless you changed it |
 
 ## Wake the NAS
 

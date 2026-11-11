@@ -106,12 +106,16 @@ return view.extend({
 
 		const guest = E('input', { type: 'checkbox', checked: s.guest ? '' : null });
 		const tm = E('input', { type: 'checkbox', checked: s.timemachine ? '' : null });
+		const recycle = E('input', { type: 'checkbox', checked: (isNew || s.recycle) ? '' : null });
+		const recycleRow = E('label', { class: 'nas-switch' }, [ recycle, E('div', {}, [
+			E('b', {}, _('Recycle bin')),
+			E('span', {}, _('Deleted files go to a hidden .recycle folder first, so they can be restored. How long they are kept is set on the Overview page (Services).')) ]) ]);
 		const cap = E('input', { type: 'number', min: '0', step: '50', value: s.tm_cap || 1000, style: 'width:110px' });
 		const capRow = E('div', { class: 'nas-field', style: 'margin:-4px 0 0 34px' }, [
 			E('label', {}, _('Maximum size for backups (GB)')), cap,
 			E('div', { class: 'nas-hint' }, _('Time Machine deletes the oldest backups when this limit is reached. 0 = no limit.'))
 		]);
-		const syncTm = () => { capRow.style.display = tm.checked ? '' : 'none'; };
+		const syncTm = () => { capRow.style.display = tm.checked ? '' : 'none'; recycleRow.style.display = tm.checked ? 'none' : ''; };
 		tm.addEventListener('change', syncTm);
 		syncTm();
 
@@ -127,6 +131,7 @@ return view.extend({
 					E('b', {}, _('Time Machine backups')),
 					E('span', {}, _('Macs can use this share as a Time Machine backup disk.')) ]) ]),
 				capRow,
+				recycleRow,
 				err
 			]),
 			E('div', { class: 'right' }, [
@@ -137,7 +142,7 @@ return view.extend({
 					if (!name.value.trim()) { err.textContent = _('Please enter a share name.'); return; }
 					if (!folder) { err.textContent = _('Please choose or name a folder.'); return; }
 					return nas.callShareSave(s.id || '', name.value.trim(), folder, create, access,
-						guest.checked, tm.checked, tm.checked ? (parseInt(cap.value, 10) || 0) : 0).then((res) => {
+						guest.checked, tm.checked, tm.checked ? (parseInt(cap.value, 10) || 0) : 0, !tm.checked && recycle.checked).then((res) => {
 						if (res && res.error) { err.textContent = res.error; return; }
 						ui.hideModal();
 						nas.notify(isNew ? _('Share "%s" created.').format(name.value.trim()) : _('Share "%s" saved.').format(name.value.trim()));

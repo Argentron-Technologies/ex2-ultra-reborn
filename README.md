@@ -27,7 +27,7 @@ installer. **Your existing data stays where it is.** WD's RAID 1 mirror is reuse
 
 | Feature | What you get |
 |---|---|
-| **File sharing** | SMB shares for Mac, Windows and Linux, with a 30-day recycle bin |
+| **File sharing** | SMB shares for Mac, Windows and Linux, with a recycle bin (30 days by default, adjustable) |
 | **Time Machine** | Mac backups with an optional size cap, discovered automatically |
 | **Simple dashboard** | Users, shares, disks, temperatures and network on one page; works on phones |
 | **Quiet fan** | WD's own temperature rules, decoded from the stock firmware |

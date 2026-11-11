@@ -91,7 +91,7 @@ Open **`http://nas.local`** (or `http://<NAS IP>`) and sign in as `root`.
 | Page | What to do |
 |---|---|
 | **Users** | Add the people and devices that may connect. Their password is what they type on their Mac or PC. |
-| **Shares** | Pick folders to share and who may use them. Tick **Time Machine** on one share for Mac backups (optionally with a size cap). Other shares get a 30-day recycle bin. |
+| **Shares** | Pick folders to share and who may use them. Tick **Time Machine** on one share for Mac backups (optionally with a size cap). Other shares get a recycle bin (on by default; deleted files kept 30 days, adjustable on the Overview page). |
 | **Overview** | Health at a glance: mirror, space, temperatures, fan, network. Restart and Shut down are here. |
 
 ![Dashboard overview](images/dashboard-overview.png)

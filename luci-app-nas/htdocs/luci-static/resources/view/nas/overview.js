@@ -356,13 +356,15 @@ return view.extend({
 			E('div', {}, (d.services || []).map((s) => {
 				const state = E('span', { class: 'nas-state ' + kind[s.state] }, [
 					E('span', { class: 'nas-led ' + kind[s.state] }),
-					s.detail ? _('After') + ' ' + s.detail : label[s.state]
+					s.text ? _(s.text) : s.detail ? _('After') + ' ' + s.detail : label[s.state]
 				]);
 				return E('div', { class: 'nas-list-row' }, [
 					E('span', {}, _(s.name)),
-					s.id == 'poweroff' || s.id == 'wol'
-						? E('button', { class: 'nas-chip nas-chip-btn', title: s.id == 'wol' ? _('Wake-on-LAN settings') : _('Change idle power-off'),
-							click: () => s.id == 'wol' ? this.wol(s) : this.idlePoweroff(s.hours || 0) }, [ state, nas.icon('edit', 'nas-ico') ])
+					s.id == 'poweroff' || s.id == 'wol' || s.id == 'recycle'
+						? E('button', { class: 'nas-chip nas-chip-btn',
+							title: { wol: _('Wake-on-LAN settings'), recycle: _('Recycle bin settings') }[s.id] || _('Change idle power-off'),
+							click: () => s.id == 'wol' ? this.wol(s) : s.id == 'recycle' ? this.recycle(s.days) : this.idlePoweroff(s.hours || 0) },
+							[ state, nas.icon('edit', 'nas-ico') ])
 						: state
 				]);
 			}))
@@ -777,6 +779,37 @@ return view.extend({
 							nas.notify(_('Renamed. Finder and Windows show the new name within a minute.'));
 							setTimeout(() => this.refresh(), 4000);
 						}
+					});
+				}) }, _('Save'))
+			])
+		]);
+	},
+
+	recycle(cur) {
+		const choices = [ [ 7, _('7 days') ], [ 14, _('14 days') ], [ 30, _('30 days') ], [ 60, _('60 days') ],
+			[ 90, _('90 days') ], [ 0, _('Forever (never empty)') ] ];
+		if (!choices.some((c) => c[0] == cur)) choices.push([ cur, _('%d days').format(cur) ]);
+		const sel = E('select', {}, choices.map((c) => E('option', { value: c[0], selected: c[0] == cur ? '' : null }, c[1])));
+		const err = E('div', { class: 'nas-error' });
+
+		ui.showModal(_('Recycle bin'), [
+			E('div', { class: 'nas-form' }, [
+				nas.field(_('Keep deleted files for'), sel,
+					_('Files deleted over the network go to a hidden .recycle folder in their share. Older ones are removed every Sunday at 04:30.'))
+			]),
+			E('p', { class: 'nas-muted nas-small', style: 'margin-top:14px' },
+				_('Switch the recycle bin on or off per share under Shares → edit a share. Time Machine shares never have one. With "Forever", deleted files keep using disk space until you remove them from .recycle yourself.')),
+			err,
+			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
+					const d = parseInt(sel.value, 10);
+					return nas.callRecycleSet(d).then((res) => {
+						if (res && res.error) { err.textContent = res.error; return; }
+						ui.hideModal();
+						nas.notify(d > 0 ? _('Deleted files are now kept for %d days.').format(d)
+							: _('Deleted files are now kept until you remove them yourself.'));
+						this.refresh();
 					});
 				}) }, _('Save'))
 			])

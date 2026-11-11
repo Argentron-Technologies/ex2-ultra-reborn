@@ -31,6 +31,7 @@
 					"power",
 					"idle_poweroff_set",
 					"wol_set",
+					"recycle_set",
 					"cold_start",
 					"cold_confirm",
 					"cold_cancel"
