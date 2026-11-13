@@ -120,7 +120,9 @@ cmd_check() {
 			echo "  $n  ${s} GB  $(cat $d/device/model 2>/dev/null)  $(readlink -f $d | grep -q /usb && echo USB || echo bay)"
 		done
 		echo; echo "RAID arrays found on the disks (read-only scan):"
-		if command -v mdadm >/dev/null; then mdadm --examine --scan 2>/dev/null | sed "s/^/  /"; else echo "  (mdadm not installed yet: run the packages step)"; fi
+		# never a bare --scan: without a config mdadm reads every partition, including the NAND
+		if command -v mdadm >/dev/null; then echo "DEVICE /dev/sd*" > /tmp/nas-mdscan.conf
+			mdadm --examine --scan --config=/tmp/nas-mdscan.conf 2>/dev/null | sed "s/^/  /"; else echo "  (mdadm not installed yet: run the packages step)"; fi
 		echo; echo "Running arrays:"; grep ^md /proc/mdstat 2>/dev/null | sed "s/^/  /" | grep . || echo "  none"
 		echo; echo "Mounted disk partitions:"; grep -E "^/dev/(sd|md)" /proc/mounts | sed "s/^/  /" | grep . || echo "  none"'
 }
@@ -155,7 +157,9 @@ cmd_data() {
 	say "looking for the data mirror (read-only)"
 	on 'command -v mdadm >/dev/null' || die "mdadm missing: run $RUN packages first"
 	# one line per array: "ARRAY ... level=raid1 ... UUID=... devices=/dev/sda2,/dev/sdb2"
-	all=$(on 'mdadm --examine --scan --verbose 2>/dev/null' | awk '/^ARRAY/ {if (l) print l; l=$0; next} {l=l " " $1} END {if (l) print l}')
+	# Only /dev/sd*: OpenWrt has no /etc/mdadm.conf, and a bare --scan falls back to every
+	# partition in /proc/partitions, including the raw NAND (froze a user's NAS in `check`).
+	all=$(on 'echo "DEVICE /dev/sd*" > /tmp/nas-mdscan.conf; mdadm --examine --scan --verbose --config=/tmp/nas-mdscan.conf 2>/dev/null' | awk '/^ARRAY/ {if (l) print l; l=$0; next} {l=l " " $1} END {if (l) print l}')
 	echo "${all:-  (no RAID metadata on any disk)}"
 	# WD's data volume is RAID 1 on partition 2 of the disks (partition 1 is WD's swap)
 	arrays=$(printf '%s\n' "$all" | grep 'level=raid1' | grep -E 'devices=/dev/sd[a-z]2(,/dev/sd[a-z]2)*$' || true)

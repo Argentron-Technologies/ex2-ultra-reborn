@@ -34,7 +34,9 @@ mirror. Do not break these rules, even if asked to "just try something":
 3. **Never install mdadm with its install scripts** (`apk add mdadm`). Use
    `apk add --no-scripts mdadm` and set `list devices '/dev/sd*'` first. Otherwise
    `mdadm --assemble --scan` probes the raw NAND, and the OpenWrt wiki reports reboots and
-   0-byte files.
+   0-byte files. The same goes for every `mdadm … --scan`, `--examine` included: always pass
+   `--config=` a file with `DEVICE /dev/sd*`. OpenWrt has no `/etc/mdadm.conf`, so a bare
+   `--scan` reads every partition, including the NAND (froze a user's NAS during `check`).
 4. **Never send microcontroller (`/dev/ttyS1`) commands that aren't already in the code.**
    Use only the commands in `nas-fan` and `nas-poweroff`, which come from WD firmware 5.29.102.
    Never send firmware-update, MFG-mode or MCU-reset frames.
