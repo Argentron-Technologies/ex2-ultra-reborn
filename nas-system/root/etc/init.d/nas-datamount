@@ -23,6 +23,12 @@ boot() {
 		md_running && break
 		try=$((try + 1))
 		logger -t nas-datamount "md1 not running ($(cat /sys/block/md1/md/array_state 2>/dev/null || echo missing)), assembling again ($try/3)"
+		# Only with mdadm's generated config limited to the disks: if the file is missing or has
+		# no DEVICE line, mdadm falls back to every partition, including the raw NAND (issue #1)
+		if ! grep -q '^DEVICE /dev/sd' /var/etc/mdadm.conf 2>/dev/null; then
+			logger -t nas-datamount "no /var/etc/mdadm.conf limited to /dev/sd*: not assembling (run ./setup.sh data)"
+			break
+		fi
 		[ "$(cat /sys/block/md1/md/array_state 2>/dev/null)" = clear ] && mdadm --stop /dev/md1 >/dev/null 2>&1
 		mdadm --assemble --scan --config=/var/etc/mdadm.conf >/dev/null 2>&1
 	done
