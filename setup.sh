@@ -27,13 +27,13 @@ kmod-fs-ntfs3 kmod-nls-utf8 kmod-nls-cp437 kmod-nls-iso8859-1 kmod-usb-storage-u
 luci-app-attendedsysupgrade owut rsync"
 
 SYSTEM_FILES="usr/sbin/nas-fan usr/sbin/nas-alert usr/sbin/nas-watch usr/sbin/nas-usb usr/sbin/nas-names
-usr/sbin/nas-recycle-clean usr/sbin/nas-coldsync usr/sbin/nas-poweroff
+usr/sbin/nas-recycle-clean usr/sbin/nas-coldsync usr/sbin/nas-poweroff usr/sbin/nas-nfs
 etc/init.d/nas-fan etc/init.d/nas-watch etc/init.d/nas-datamount etc/init.d/nas-usb etc/init.d/nas-poweroff
 etc/hotplug.d/block/30-nas-usb"
 
 # kept across OpenWrt upgrades (added to /etc/sysupgrade.conf)
 KEEP="/usr/sbin/nas-fan /usr/sbin/nas-alert /usr/sbin/nas-watch /usr/sbin/nas-usb /usr/sbin/nas-names
-/usr/sbin/nas-recycle-clean /usr/sbin/nas-coldsync /usr/sbin/nas-poweroff
+/usr/sbin/nas-recycle-clean /usr/sbin/nas-coldsync /usr/sbin/nas-poweroff /usr/sbin/nas-nfs
 /etc/init.d/nas-fan /etc/init.d/nas-watch /etc/init.d/nas-datamount /etc/init.d/nas-usb /etc/init.d/nas-poweroff
 /etc/rc.d/S15nas-fan /etc/rc.d/K90nas-fan /etc/rc.d/S99nas-watch /etc/rc.d/K10nas-watch /etc/rc.d/S14nas-datamount
 /etc/rc.d/S97nas-usb /etc/rc.d/S99nas-poweroff /etc/rc.d/K99nas-poweroff
@@ -71,7 +71,7 @@ find_nas() {
 	for h in root@nas.local root@openwrt.local; do
 		ssh -o ConnectTimeout=5 -o BatchMode=yes "$h" true 2>/dev/null && { NAS=$h; return; }
 	done
-	die "can't reach the NAS. Run with NAS=root@<its IP> ./setup.sh $1 (and add your SSH key: ssh-copy-id root@<IP>)"
+	die "can't reach the NAS. Run with NAS=root@<its IP> ./$(basename "$0") $1 (and add your SSH key: ssh-copy-id root@<IP>)"
 }
 
 # Only ever touch a WD My Cloud EX2 Ultra running OpenWrt. Every check must pass:
@@ -361,6 +361,9 @@ cmd_alerts() {
 	printf '%s\n' "$pw" | on 'umask 077; cat > /etc/nas-alert.pass'
 	on '/usr/sbin/nas-alert test'
 }
+
+# plugins.sh loads this file for its helpers (find_nas, guard, on, ask, ...) and stops here
+[ -n "$SETUP_AS_LIBRARY" ] && return 0
 
 case "$1" in
 	check|packages|data|install|alerts|update) ;;

@@ -41,6 +41,7 @@ On a Mac, `dns-sd -B _adisk._tcp` should list the NAS (Time Machine discovery).
 |---|---|
 | **This project** | Get the new version of the repo, then `./setup.sh update` (Windows: `.\setup.cmd update`). It only replaces scripts, dashboard and theme, never your settings. |
 | **OpenWrt** | Dashboard → **System → Attended Sysupgrade**, or `nas# owut upgrade`. It builds an image with your packages included, and everything from this project survives. Afterwards, run the health check, then `./setup.sh update` if anything is missing. |
+| **Plugins** | Nothing to do: `./setup.sh update` also refreshes the plugin helpers, and OpenWrt upgrades keep installed plugins (e.g. the NFS server and its folder list). Check with `./plugins.sh nfs status`. |
 
 ## Power-off and Wake-on-LAN
 
@@ -128,6 +129,8 @@ The NAS is built for a trusted home network. What protects your files:
   and can't use SSH.
 - **Nothing faces the internet.** No public IPv6, no cloud, no port forwarding. Keep it that
   way: don't forward ports 445 or 22 to the NAS on your router.
+- **NFS is off unless you add the plugin.** NFS has no passwords: it trusts the computers
+  you list for each folder (`./plugins.sh nfs status`). Never forward NFS ports (111, 2049).
 
 What it does *not* do is lock files per user on the NAS itself. Samba writes every file as
 `root` (`force_root`), so the folder permissions on disk aren't what keeps people apart. Anyone
@@ -163,6 +166,10 @@ power cut while you add or delete a user can't leave `/etc/passwd` or `/etc/shad
 | Disks never sleep | `nas# hdparm -C /dev/sda`. Find what keeps reading with `cat /proc/diskstats` over a few minutes. The dashboard and alerts never wake disks. |
 | No alert e-mails | `nas# nas-alert test`. Check `/etc/nas-alert.pass` and `logread \| grep nas-alert`. |
 | Fan stuck at full speed | `nas# cat /tmp/nas-fan.status` (RAID sync running? sensor unreadable?) and `logread \| grep nas-fan` |
+| NFS: `access denied by server` | The computer isn't in the folder's allowed network, or it connected over IPv6: mount with the NAS's IPv4 address, not `nas.local`. See who is allowed with `./plugins.sh nfs status`. Also check the share is ticked for NFS on the Shares page. |
+| NFS: mount hangs or "Connection refused" | The NFS server is off or stopped: Overview → Services → NFS (Linux), or `nas# nas-nfs status`. Log: `logread \| grep -E "nas-nfs\|nfsd\|mountd"`. |
+| NFS controls missing on the dashboard | The NFS plugin isn't installed (`./plugins.sh nfs install`), or the browser shows old pages: reload. |
+| Storage offline after boot, log says "not assembling" | `nas-datamount` only retries the mirror with mdadm's own config limited to the disks (`/var/etc/mdadm.conf` with `DEVICE /dev/sd*`), never a scan of every partition, which would read the NAND flash. Run `./setup.sh data` again to restore that setting, then reboot. |
 
 <details>
 <summary><b>Where things live</b> (for the curious)</summary>
@@ -179,5 +186,6 @@ power cut while you add or delete a user can't leave `/etc/passwd` or `/etc/shad
 | Cold-storage copies | `nas-coldsync` | dashboard card |
 | Names | `nas-names` | `/etc/avahi/services/nas.service` |
 | Recycle-bin cleanup | `nas-recycle-clean` | cron, Sundays 04:30; days from `nas-alert.main.recycle_days` |
+| NFS (optional plugin) | `plugins/nfs.sh`, `nas-nfs` | `/etc/exports` (kept by `nas-nfs`), services `nfsd` and `rpcbind`; dashboard: Shares → Edit → NFS, Services → NFS; idle power-off counts NFS connections |
 
 </details>

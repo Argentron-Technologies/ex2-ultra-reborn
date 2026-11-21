@@ -147,5 +147,75 @@ at any time with `ssh root@nas.local nas-alert test`.
 
 The password is stored only on the NAS, in a file only `root` can read, never in this repo.
 
+## 9. Optional plugins
+
+Plugins are extras that `setup.sh` never installs. You add one only if you need it, and
+can remove it again. List them, or show what one does:
+
+```sh
+./plugins.sh                  # Windows: .\plugins.cmd
+./plugins.sh nfs              # Windows: .\plugins.cmd nfs
+```
+
+### NFS (for Linux computers)
+
+NFS lets Linux computers mount a NAS folder like a local disk. SMB works from Linux too; use
+NFS if you prefer it.
+
+```sh
+./plugins.sh nfs install                      # the NFS server (NFSv3, about 5 MB of flash)
+./plugins.sh nfs add Media                    # read-write, for your whole home network
+./plugins.sh nfs add "Family Photos" ro       # read-only
+./plugins.sh nfs add Media rw 192.168.1.20    # only this one computer
+./plugins.sh nfs status                       # shared folders, connected computers
+./plugins.sh nfs del Media                    # stop sharing (files stay)
+./plugins.sh nfs uninstall                    # remove it all again
+```
+
+Share the folder on the dashboard first: `add` shares an existing folder in `/mnt/data`.
+
+**Or use the dashboard.** Once `install` has run, the dashboard shows NFS too, and both ways
+see the same list:
+
+- **Shares → Edit → NFS (Linux)**: tick it to share that folder over NFS, and choose *Read &
+  write* or *Read only*. The dialog shows the exact `mount` command for Linux. The cards show
+  an **NFS** chip.
+- **Overview → Services → NFS (Linux)**: switch the NFS server off or on. Off stops all NFS
+  sharing (also after a restart) but keeps your list of NFS folders for when you switch it on.
+
+Then, using the NAS's IP address:
+
+| | |
+|---|---|
+| **Linux** | `sudo mount -t nfs -o vers=3 <NAS IP>:/mnt/data/Media /mnt/media` |
+| **Mac** | Finder → *Go → Connect to Server* → `nfs://<NAS IP>/mnt/data/Media` |
+
+> [!WARNING]
+> NFS has **no passwords**. Every computer you allow can read the folder, and with `rw` also
+> change or delete its files. Allow only computers you trust, and never forward NFS ports on
+> your router. Time Machine folders can't be shared over NFS: changes outside Time Machine
+> break its backups.
+
+Files written over NFS belong to `root`, the same as files written over SMB, so both kinds of
+access work on the same folders.
+
+**Good to know**
+
+- Use the NAS's **IP address** to connect, not `nas.local`: a `.local` name can resolve to the
+  NAS's IPv6 address, which isn't in the allowed network, and the mount is refused.
+- NFS writes are **safe but a bit slower** than SMB: the NAS confirms each write only after it
+  is on the disk. Reads are full speed.
+- The NAS's **disks can still sleep**: NFS doesn't touch them while nothing is read or written.
+  Some Linux file managers look into open folders now and then; if the disks never sleep while
+  a Linux computer has a folder mounted, close that window or unmount when you're done.
+- **Idle power-off** counts a connected NFS computer as "in use", like an SMB connection.
+- **OpenWrt upgrades** (Attended Sysupgrade) keep the NFS server and your NFS folders.
+
+> [!NOTE]
+> NFS support is new. It was tested on OpenWrt 25.12.6 in a virtual machine, with Linux and
+> macOS computers connecting, and on the dashboard; it hasn't been run on an EX2 Ultra yet.
+> If something doesn't work, `./plugins.sh nfs uninstall` removes it completely, and an
+> [issue](https://github.com/Argentron-Technologies/ex2-ultra-reborn/issues) helps us fix it.
+
 **Done.** For day-to-day care, upgrades and troubleshooting, see
 **[Maintenance →](MAINTENANCE.md)**

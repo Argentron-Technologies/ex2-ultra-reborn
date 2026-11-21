@@ -9,6 +9,7 @@ nothing extra to install: the scripts use the `ssh`, `scp` and `tar` that come w
 |---|---|---|
 | `.\preflight-wd.cmd` | `./preflight-wd.sh` | [Install OpenWrt](INSTALL-OPENWRT.md), step 2 |
 | `.\setup.cmd` | `./setup.sh` | [Setup guide](SETUP-GUIDE.md) |
+| `.\plugins.cmd` | `./plugins.sh` | [Optional plugins](SETUP-GUIDE.md#9-optional-plugins), e.g. `.\plugins.cmd nfs add Media` |
 | `.\windows\wake-nas.cmd` | `mac/wake-nas` | Waking the NAS after a power-off |
 
 ---
@@ -31,7 +32,8 @@ If that fails: *Settings → System → Optional features → Add a feature →*
 
 `setup.cmd` packs the repo, copies it into the NAS's memory with `scp`, and runs the same
 `setup.sh` there that Mac and Linux use. Both platforms follow exactly the same steps and the
-same model checks. The copy is removed afterwards.
+same model checks. The copy is removed afterwards. `plugins.cmd` works the same way with
+`plugins.sh`; put folder names with spaces in double quotes (`.\plugins.cmd nfs add "Family Photos"`).
 
 The NAS address is asked for once per window. You can also pass it, or set it:
 

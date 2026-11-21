@@ -8,7 +8,8 @@ import { cursor } from 'uci';
 const DATA = '/mnt/data';
 const HIDDEN_DIRS = [ 'lost+found', 'Nas_Prog', 'otaclient', 'restsdk-data', 'restsdk-info' ];
 const RESERVED_USERS = [ 'root', 'daemon', 'ftp', 'network', 'nobody', 'dnsmasq', 'logd', 'ubus',
-	'admin', 'guest', 'samba', 'smb', 'apk', 'ntp' ];
+	'admin', 'guest', 'samba', 'smb', 'apk', 'ntp',
+	'nfs' ];   /* system account of nfs-kernel-server (NFS plugin), uid 32768+ */
 
 function sh(cmd) {
 	let p = popen(cmd, 'r');
@@ -268,7 +269,8 @@ function passwd_entries() {
 }
 
 function is_nas_user(e) {
-	return e.uid >= 1000 && e.uid < 60000 && e.shell == '/bin/false';
+	/* packages create system accounts in this range too (e.g. nfs): never show those as people */
+	return e.uid >= 1000 && e.uid < 60000 && e.shell == '/bin/false' && index(RESERVED_USERS, e.name) < 0;
 }
 
 function nas_users() {
@@ -394,6 +396,53 @@ function valid_folder_name(n) {
 	return type(n) == 'string' && match(n, /^[A-Za-z0-9][A-Za-z0-9_. -]{0,63}$/) && index(n, '..') < 0;
 }
 
+/* ------------------------------------------------------------------ NFS (optional plugin) */
+
+/* The share list belongs to /usr/sbin/nas-nfs, the same helper plugins.sh nfs uses, so the
+ * dashboard and the command line always agree. Without the plugin, state is 'missing' and the
+ * dashboard shows no NFS controls. */
+const NFS = '/usr/sbin/nas-nfs';
+
+function nfs_state() {
+	if (!stat(NFS)) return 'missing';
+	let s = trim(sh(`${NFS} state 2>/dev/null`));
+	return length(s) ? s : 'missing';
+}
+
+/* folder -> { who, mode } */
+function nfs_list() {
+	let out = {};
+	for (let l in split(sh(`${NFS} list 2>/dev/null`), '\n')) {
+		let f = split(l, '\t');
+		if (length(f) == 3) out[f[0]] = { who: f[1], mode: f[2] };
+	}
+	return out;
+}
+
+/* runs nas-nfs; returns null on success, else its message */
+function nfs_run(args) {
+	let out = trim(sh(`${NFS} ${args} 2>&1; echo "nas-nfs-rc=$?"`));
+	let m = match(out, /nas-nfs-rc=([0-9]+)$/);
+	if (m && m[1] == '0') return null;
+	let msg = trim(replace(out, /nas-nfs-rc=[0-9]+$/, ''));
+	return length(msg) ? msg : 'nas-nfs failed.';
+}
+
+/* the folder of a share path directly in /mnt/data, or null */
+function data_folder(path) {
+	if (type(path) != 'string' || index(path, DATA + '/') != 0) return null;
+	let f = substr(path, length(DATA) + 1);
+	return valid_folder_name(f) ? f : null;
+}
+
+/* is this path still used by a share other than skip_id? */
+function path_shared(path, skip_id) {
+	let used = false, c = cursor();
+	c.load('samba4');
+	c.foreach('samba4', 'sambashare', (s) => { if (s['.name'] != skip_id && s.path == path) used = true; });
+	return used;
+}
+
 /* ------------------------------------------------------------------ methods */
 
 function services_info() {
@@ -426,7 +475,8 @@ function services_info() {
 	let rd = c.get('nas-alert', 'main', 'recycle_days') ?? '30';
 	let rdays = match(rd, /^[0-9]+$/) ? +rd : 30;
 	let last = trim(split(readfile('/etc/nas-poweroff.last') ?? '', '\n')[0] ?? '');
-	return [
+	let nfs = nfs_state(), nfs_n = (nfs != 'missing') ? length(keys(nfs_list())) : 0;
+	let list = [
 		{ id: 'smb',  name: 'File sharing (SMB)', state: running('samba4') ? 'running' : 'stopped' },
 		{ id: 'tm',   name: 'Time Machine',       state: !tm ? 'off' : (running('samba4') ? 'running' : 'stopped') },
 		{ id: 'mdns', name: 'Mac discovery',      state: running('avahi-daemon') ? 'running' : 'stopped' },
@@ -439,6 +489,11 @@ function services_info() {
 		{ id: 'wol', name: 'Wake-on-LAN', state: wol ? 'idle' : 'off',
 		  mac: trim(readfile('/sys/class/net/eth0/address') ?? ''), last: length(last) ? last : null }
 	];
+	// NFS: only once the plugin is installed (plugins.sh nfs install)
+	if (nfs != 'missing')
+		push(list, { id: 'nfs', name: 'NFS (Linux)', state: { running: 'running', off: 'off' }[nfs] ?? 'stopped', shared: nfs_n,
+		  text: nfs == 'running' ? (nfs_n == 1 ? '1 folder' : `${nfs_n} folders`) : null });
+	return list;
 }
 
 function net_counters(dev) {
@@ -677,12 +732,26 @@ const methods = {
 
 	shares_list: {
 		call: function() {
-			return { shares: share_list(), folders: folder_list(), users: nas_users(), base: DATA, recycle_global: recycle_global() };
+			let shares = share_list(), state = nfs_state(), nfs = null;
+			if (state != 'missing') {
+				let exp = nfs_list();
+				for (let s in shares) {
+					let e = exp[data_folder(s.path) ?? ''];
+					s.nfs = e ? e.mode : null;
+					s.nfs_who = e ? e.who : null;
+				}
+				/* ip: for the mount hint. An IPv4 address, not nas.local: .local can resolve to the
+				 * link-local IPv6 address, which isn't in the allowed network */
+				let ip = trim(sh("ip -4 -o addr show br-lan 2>/dev/null | awk '{ split($4, a, \"/\"); print a[1]; exit }'"));
+				nfs = { state: state, lan: trim(sh(`${NFS} lan 2>/dev/null`)), ip: ip };
+			}
+			return { shares: shares, folders: folder_list(), users: nas_users(), base: DATA, recycle_global: recycle_global(), nfs: nfs };
 		}
 	},
 
 	share_save: {
-		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0, recycle: true },
+		/* nfs: 'rw' | 'ro' | '' (not over NFS); anything else leaves NFS as it is */
+		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0, recycle: true, nfs: 'nfs' },
 		call: function(req) {
 			let a = req.args;
 			if (!valid_share_name(a.name))
@@ -717,6 +786,7 @@ const methods = {
 
 			let id = a.id;
 			if (!id || !c.get('samba4', id)) id = c.add('samba4', 'sambashare');
+			let oldpath = c.get('samba4', id, 'path');
 
 			c.set('samba4', id, 'name', a.name);
 			c.set('samba4', id, 'path', path);
@@ -750,6 +820,21 @@ const methods = {
 			c.commit('samba4');
 			reload_samba();
 			refresh_names();
+
+			/* NFS (optional plugin): the folder follows the share. Time Machine folders never go
+			 * over NFS (changes outside Time Machine break its backups). */
+			if (a.nfs in [ 'rw', 'ro', '' ] && nfs_state() != 'missing') {
+				let exp = nfs_list(), err = null;
+				let old = data_folder(oldpath);
+				/* the share moved to another folder: the old one stops, unless another share still uses it */
+				if (old && old != a.folder && exp[old] && !path_shared(oldpath, id))
+					err = nfs_run(`del ${shq(old)}`);
+				if (!err) {
+					if (a.nfs != '' && !a.timemachine) err = nfs_run(`add ${shq(a.folder)} ${a.nfs}`);
+					else if (exp[a.folder]) err = nfs_run(`del ${shq(a.folder)}`);
+				}
+				if (err) return { ok: true, id: id, warning: `The share was saved, but NFS: ${err}` };
+			}
 			return { ok: true, id: id };
 		}
 	},
@@ -760,10 +845,17 @@ const methods = {
 			let c = cursor();
 			c.load('samba4');
 			if (c.get('samba4', req.args.id) != 'sambashare') return { error: 'Unknown share.' };
+			let path = c.get('samba4', req.args.id, 'path');
 			c.delete('samba4', req.args.id);
 			c.commit('samba4');
 			reload_samba();
 			refresh_names();
+			/* NFS: the folder stops too, unless another share still uses it (files stay) */
+			let f = data_folder(path);
+			if (f && nfs_state() != 'missing' && nfs_list()[f] && !path_shared(path, null)) {
+				let err = nfs_run(`del ${shq(f)}`);
+				if (err) return { ok: true, warning: `The share was deleted, but NFS: ${err}` };
+			}
 			return { ok: true };
 		}
 	},
@@ -898,6 +990,18 @@ const methods = {
 		}
 	},
 
+
+	// NFS server on/off (optional plugin); the share list stays either way
+	nfs_set: {
+		args: { enabled: false },
+		call: function(req) {
+			if (type(req.args.enabled) != 'bool') return { error: 'Missing on/off value.' };
+			if (nfs_state() == 'missing') return { error: 'The NFS plugin is not installed.' };
+			let err = nfs_run(req.args.enabled ? 'enable' : 'disable');
+			if (err) return { error: err };
+			return { ok: true, enabled: req.args.enabled, state: nfs_state() };
+		}
+	},
 
 	// Wake-on-LAN on/off: read by nas-poweroff at the next power-off
 	wol_set: {

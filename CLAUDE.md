@@ -13,11 +13,12 @@ Wake-on-LAN.
 |---|---|---|
 | `preflight-wd.sh` | model check + flash backup, read-only | PC → NAS on **WD firmware** (user `sshd`) |
 | `setup.sh` | installer: `check`, `packages`, `data`, `install`, `alerts`, `update` | PC → NAS on **OpenWrt** (user `root`) |
+| `plugins.sh`, `plugins/*.sh` | optional extras (NFS), never installed by `setup.sh` | PC → NAS on **OpenWrt** (user `root`) |
 | `nas-system/root/` | shell scripts and init files, same paths as on the NAS (`/`) | NAS (BusyBox ash) |
 | `luci-app-nas/` | dashboard: JS views in `htdocs/`, ucode rpcd backend `luci.nas` | NAS (`/www`, `/usr/share/rpcd`) |
 | `luci-theme-nasos/` | theme on top of LuCI Bootstrap (Apache 2.0) | NAS |
 | `mac/` | Wake-on-LAN helpers | user's Mac |
-| `setup.cmd`, `preflight-wd.cmd`, `windows/*.ps1` | Windows versions (PowerShell 5.1+ and 7) | user's Windows PC |
+| `setup.cmd`, `plugins.cmd`, `preflight-wd.cmd`, `windows/*.ps1` | Windows versions (PowerShell 5.1+ and 7) | user's Windows PC |
 | `docs/` | install guide, maintenance guide, screenshots | |
 
 ## Hard safety rules
@@ -101,7 +102,7 @@ mirror. Do not break these rules, even if asked to "just try something":
 
 ## Testing changes
 
-- Syntax: `sh -n setup.sh preflight-wd.sh nas-system/root/usr/sbin/* nas-system/root/etc/init.d/*`
+- Syntax: `sh -n setup.sh plugins.sh plugins/*.sh preflight-wd.sh nas-system/root/usr/sbin/* nas-system/root/etc/init.d/*`
   and `node --check` for the JS views.
 - On a real NAS: `./setup.sh check` (read-only), then `./setup.sh update` for code-only
   changes.
@@ -169,6 +170,10 @@ Trust them over forum posts, and over your own assumptions.
   and `/mnt/sdb2` (the raw members). `setup.sh data` deletes them and sets `anon_mount=0`.
 - Boot order: mdadm (S13) assembles `md1`, then `nas-datamount` (S14) runs `block mount`.
   Before this fix, `md1` never assembled because the raw member was mounted first.
+- `nas-datamount`'s retry runs `mdadm --assemble --scan` only when `/var/etc/mdadm.conf` has a
+  `DEVICE /dev/sd…` line. Verified in mdadm 4.3 `config.c`: with `--config=` pointing to a missing
+  file or one without DEVICE lines, mdadm silently falls back to `load_partitions()` (every
+  partition, NAND included), the same failure as issue #1.
 - **Never auto-add or re-add a returning disk.** A user may keep the second disk as an
   offline backup, and a hotplug re-add would overwrite it. After any raw mount, a bitmap
   re-add is unsafe anyway: it needs a full `--add`, and only when the user asks.
@@ -194,9 +199,30 @@ Trust them over forum posts, and over your own assumptions.
   2 seconds after plugging in was a seating problem, not a port fault: reseat the drive.
 - `nas-usb` touches only USB-attached devices (`is_usb`), never the SATA bays.
 
+**NFS** is an optional plugin (`plugins/nfs.sh`), never part of `setup.sh`:
+- Package `nfs-kernel-server` (NFSv3, fixed ports: mountd 32780, statd 32778, lockd 32777). Not
+  `-v4`: that variant starts `rpc.nfsd -N 3`, and macOS mounts NFSv3. There is no `luci-app-nfs`
+  in OpenWrt 25.12, and no UCI config: the share list is `/etc/exports` (a conffile).
+- Export options `sync,subtree_check,all_squash,anonuid=0,anongid=0,insecure`: every client acts
+  as root like Samba's `force_root` (shares are root-owned 0644/0755); `insecure` because macOS
+  connects from ports above 1023. Paths are double-quoted (nfs-utils `xgettok` handles quotes).
+- `add` refuses Time Machine shares (`samba4.<id>.timemachine=1`) and anything but a real folder
+  directly in `/mnt/data`. Tested in a VM with Linux (kernel NFS client) and macOS clients.
+- `nas-watch` idle power-off counts NFS (2049) connections like SMB (445).
+- **One owner of the share list: `/usr/sbin/nas-nfs`** (`state`, `list`, `add`, `del`, `enable`,
+  `disable`, `status`, `remove`). `plugins/nfs.sh` and the dashboard (`luci.nas`: `shares_list`,
+  `share_save` arg `nfs` = `rw`/`ro`/`''`, `share_delete`, `nfs_set`, Services row `nfs`) only call
+  it. `setup.sh` installs it always; without the package, `state` is `missing` and the dashboard
+  shows no NFS controls. Send `nfs` as `undefined` (LuCI drops it) to leave NFS unchanged: rpcd
+  rejects a `null` for a string argument.
+- A share moved to another folder moves its export; deleting a share drops its export unless
+  another share uses the same folder. Off (`disable`) stops nfsd and rpcbind and their boot links,
+  keeping `/etc/exports`.
+- The package creates a system account `nfs` (uid 32768+). It's in `RESERVED_USERS`, which
+  `is_nas_user` also checks, so it never appears on the Users page.
+
 **Deliberately out of scope** (tried, then removed at the owner's request; don't re-add
 without being asked)
-- NFS.
 - Media servers:
   - OwnTone: the Mac Music app fetched artwork per song, ~11 minutes per open.
   - MiniDLNA: its WMA tag reader crashes on some files and aborts the scan.
@@ -246,6 +272,18 @@ The goal is file sharing plus Time Machine, kept simple.
    `ubus call luci.nas <method> '<json>'`.
 6. Use the existing helpers in `common.js` (`nas.tile`, `nas.pill`, `nas.button`,
    `nas.field`, `nas.notify`) and the theme's classes, so new pages match.
+
+**Adding a plugin** (an optional extra the user installs on purpose)
+- One file, `plugins/<name>.sh`. `plugins.sh` loads `setup.sh` as a library (`SETUP_AS_LIBRARY=1`,
+  so `find_nas`, `guard`, `on`, `ask`, `die`, `say` are shared and the model check is the same),
+  runs `guard`, then sources the plugin and calls `plugin_main "$@"`.
+- The top comment block is the help text; its `# about: ` line is the one-line summary in the list.
+- Prefix the plugin's functions (`nfs_…`). Offer `install`, `status` and `uninstall`, and make
+  `uninstall` leave the NAS as before (packages, `/etc/sysupgrade.conf` entries, boot links).
+- Pass values to remote scripts as arguments (`on "sh -s -- '$a'" <<'EOF'`), validated first;
+  never paste user input into a script body.
+- Windows needs nothing extra: `plugins.cmd` runs `setup.ps1 plugins …`, which uploads
+  `plugins.sh` and `plugins/` and runs it on the NAS. Arguments with `'`, `"`, `` ` ``, `$` or `\` are refused.
 
 **Theme changes**
 - Only `nasos.css`, `menu-nasos.js` and the `.ut` templates are ours. `cascade.css` and

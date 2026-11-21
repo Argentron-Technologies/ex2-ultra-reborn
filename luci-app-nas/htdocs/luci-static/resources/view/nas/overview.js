@@ -360,10 +360,10 @@ return view.extend({
 				]);
 				return E('div', { class: 'nas-list-row' }, [
 					E('span', {}, _(s.name)),
-					[ 'poweroff', 'wol', 'recycle', 'idle' ].indexOf(s.id) >= 0
+					[ 'poweroff', 'wol', 'recycle', 'idle', 'nfs' ].indexOf(s.id) >= 0
 						? E('button', { class: 'nas-chip nas-chip-btn',
-							title: { wol: _('Wake-on-LAN settings'), recycle: _('Recycle bin settings'), idle: _('Disk sleep settings') }[s.id] || _('Change idle power-off'),
-							click: () => s.id == 'wol' ? this.wol(s) : s.id == 'recycle' ? this.recycle(s.days, s.enabled !== false)
+							title: { wol: _('Wake-on-LAN settings'), recycle: _('Recycle bin settings'), idle: _('Disk sleep settings'), nfs: _('NFS settings') }[s.id] || _('Change idle power-off'),
+							click: () => s.id == 'wol' ? this.wol(s) : s.id == 'nfs' ? this.nfs(s) : s.id == 'recycle' ? this.recycle(s.days, s.enabled !== false)
 								: s.id == 'idle' ? this.diskSleep(s.state == 'off' ? 0 : Math.round(s.minutes || 0)) : this.idlePoweroff(s.hours || 0) },
 							[ state, nas.icon('edit', 'nas-ico') ])
 						: state
@@ -935,6 +935,39 @@ return view.extend({
 						ui.hideModal();
 						nas.notify(on.checked ? _('Wake-on-LAN is on: the NAS can be woken over the network after a power-off.')
 							: _('Wake-on-LAN is off: after a power-off, replug the power cable to start the NAS.'));
+						this.refresh();
+					});
+				}) }, _('Save'))
+			])
+		]);
+	},
+
+	/* NFS server on/off (optional plugin). Off keeps the list of NFS folders, so switching it
+	 * back on shares the same folders again. */
+	nfs(s) {
+		const on = E('input', { type: 'checkbox', checked: s.state != 'off' ? '' : null });
+		const err = E('div', { class: 'nas-error' });
+		const n = s.shared || 0;
+
+		ui.showModal(_('NFS (Linux)'), [
+			E('div', { class: 'nas-form' }, [
+				E('label', { class: 'nas-switch' }, [ on, E('div', {}, [
+					E('b', {}, _('NFS server')),
+					E('span', {}, _('Linux computers can mount the folders you share over NFS. When this is off, nothing is shared over NFS, also not after a restart; the list of NFS folders is kept.')) ]) ])
+			]),
+			E('p', { class: 'nas-muted nas-small', style: 'margin-top:14px' }, [
+				n == 0 ? _('No folders are shared over NFS yet.') : n == 1 ? _('1 folder is shared over NFS.') : _('%d folders are shared over NFS.').format(n),
+				' ', _('Choose which ones on the Shares page (Edit → NFS).'),
+				s.state == 'stopped' ? E('span', { class: 'nas-error', style: 'display:block;margin-top:8px' }, _('The NFS server is switched on, but not running. Saving restarts it; if it stays stopped, check the log: logread | grep nfs')) : ''
+			]),
+			err,
+			E('div', { class: 'right' }, [
+				E('button', { class: 'btn cbi-button', click: ui.hideModal }, _('Cancel')), ' ',
+				E('button', { class: 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, () => {
+					return nas.callNfsSet(on.checked).then((res) => {
+						if (res && res.error) { err.textContent = res.error; return; }
+						ui.hideModal();
+						nas.notify(on.checked ? _('NFS is on: the NFS folders are shared.') : _('NFS is off: nothing is shared over NFS. The list of NFS folders is kept.'));
 						this.refresh();
 					});
 				}) }, _('Save'))

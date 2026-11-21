@@ -156,7 +156,8 @@ check_idle() {
 	[ "$h" -gt 0 ] 2>/dev/null || { rm -f $S/idle_since; return; }
 	now=$(date +%s)
 	io=$(awk '{print $1 "/" $5}' /sys/block/md1/stat 2>/dev/null)   # reads/writes completed
-	smb=$(netstat -tn 2>/dev/null | grep -c ':445 .*ESTABLISHED')
+	# open SMB (445) or NFS (2049, optional plugin) connections count as in use
+	smb=$(netstat -tn 2>/dev/null | grep -cE ':(445|2049) .*ESTABLISHED')
 	act=$(cat $MD/sync_action 2>/dev/null)
 	if [ ! -f $S/idle_since ] || [ "$io" != "$(cat $S/idle_io 2>/dev/null)" ] || \
 	   [ "$smb" -gt 0 ] || [ "$act" != idle ] || /usr/sbin/nas-coldsync running; then

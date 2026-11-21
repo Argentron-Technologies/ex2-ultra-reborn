@@ -36,6 +36,7 @@ installer. **Your existing data stays where it is.** WD's RAID 1 mirror is reuse
 | **Power** | Real power-off, Wake-on-LAN, optional idle power-off, overheat shutdown |
 | **USB** | Drives are shared automatically; one-click copy or sync of folders to cold storage |
 | **Private by default** | No cloud, no public IPv6, nothing exposed to the internet |
+| **Optional plugins** | Extras you add only if you want them, e.g. NFS shares for Linux computers (`./plugins.sh`), then switched per share on the dashboard |
 
 ## Supported hardware
 
@@ -73,6 +74,9 @@ ssh $NAS reboot
 ./setup.sh alerts       # optional: e-mail alerts (Gmail works, port 587)
 ```
 
+Optional extras, such as NFS shares for Linux computers, are separate plugins:
+`./plugins.sh` lists them (Windows: `.\plugins.cmd`). See [Optional plugins](docs/SETUP-GUIDE.md#9-optional-plugins).
+
 Then open `http://nas.local` and create your users and shares. For e-mail alerts with Gmail
 or your own mail server, see [e-mail alerts](docs/SETUP-GUIDE.md#8-e-mail-alerts-optional).
 The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots.
@@ -93,6 +97,8 @@ The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots
 ```
 preflight-wd.sh      model check + flash backup, before flashing   (Windows: preflight-wd.cmd)
 setup.sh             installer and updater, after flashing         (Windows: setup.cmd)
+plugins.sh           optional plugins, e.g. NFS                    (Windows: plugins.cmd)
+plugins/             one file per plugin
 luci-app-nas/        dashboard pages and their backend
 luci-theme-nasos/    "NAS OS" theme (based on LuCI Bootstrap)
 nas-system/          fan control, alerts, power, RAID mount, USB, configs
@@ -116,7 +122,8 @@ Updates: edit, then `./setup.sh update` (Windows: `.\setup.cmd update`). OpenWrt
   the files aren't locked per user. Don't expose it to the internet. See
   [Security](docs/MAINTENANCE.md#security).
 
-Tested on OpenWrt 25.12.5 and 25.12.6. Found a problem?
+Tested on OpenWrt 25.12.5 and 25.12.6. The NFS plugin is new and so far tested in a virtual
+machine only. Found a problem?
 [Open an issue](https://github.com/Argentron-Technologies/ex2-ultra-reborn/issues).
 
 ## License

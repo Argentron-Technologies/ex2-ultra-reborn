@@ -34,6 +34,8 @@ return view.extend({
 			const chips = [];
 			if (s.timemachine) chips.push(nas.pill(_('Time Machine') + (s.tm_cap ? ' · ' + (s.tm_cap >= 1000 ? (s.tm_cap / 1000) + ' TB' : s.tm_cap + ' GB') + ' ' + _('cap') : ''), 'info'));
 			if (s.guest) chips.push(nas.pill(_('Guest access'), 'warn'));
+			if (s.nfs) chips.push(nas.pill(_('NFS') + (s.nfs == 'ro' ? ' · ' + _('read only') : '') +
+				(d.nfs && d.nfs.state != 'running' ? ' · ' + _('server off') : ''), d.nfs && d.nfs.state == 'running' ? 'info' : ''));
 			if (!s.exists) chips.push(nas.pill(_('Folder missing'), 'bad'));
 			if (!users.length && !s.guest) chips.push(nas.pill(_('Nobody has access'), ''));
 
@@ -117,7 +119,47 @@ return view.extend({
 			E('label', {}, _('Maximum size for backups (GB)')), cap,
 			E('div', { class: 'nas-hint' }, _('Time Machine deletes the oldest backups when this limit is reached. 0 = no limit.'))
 		]);
-		const syncTm = () => { capRow.style.display = tm.checked ? '' : 'none'; recycleRow.style.display = tm.checked ? 'none' : ''; };
+		/* NFS (optional plugin, ./plugins.sh nfs install): only shown once the NFS server is installed */
+		let nfsOn = null, nfsMode = null, nfsRow = '', nfsModeRow = '';
+		if (d.nfs) {
+			nfsOn = E('input', { type: 'checkbox', checked: s.nfs ? '' : null });
+			nfsMode = E('select', { style: 'width:auto' }, [
+				E('option', { value: 'rw', selected: s.nfs != 'ro' ? '' : null }, _('Read & write')),
+				E('option', { value: 'ro', selected: s.nfs == 'ro' ? '' : null }, _('Read only'))
+			]);
+			const who = s.nfs_who || d.nfs.lan || _('your home network');
+			nfsRow = E('label', { class: 'nas-switch' }, [ nfsOn, E('div', {}, [
+				E('b', {}, _('NFS (Linux)')),
+				E('span', {}, _('Linux computers can mount this folder over NFS. NFS has no passwords: every computer in %s gets the access chosen below.').format(who) +
+					(d.nfs.state != 'running' ? ' ' + _('The NFS server is switched off (Overview → Services); the folder is shared once it is on.') : '')) ]) ]);
+			/* plain text node: E() would read "<...>" in a string as HTML */
+			const hint = E('code', { style: 'font-family:var(--nas-mono);user-select:all;word-break:break-all' });
+			const syncHint = () => {
+				const f = (folderSel.value === NEW_FOLDER ? newFolder.value.trim() : folderSel.value) || 'Folder';
+				const q = /\s/.test(f) ? "'" : '';
+				hint.textContent = 'sudo mount -t nfs -o vers=3 ' + (d.nfs.ip || 'NAS-IP') + ':' + q + d.base + '/' + f + q +
+					' /mnt/' + f.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+			};
+			folderSel.addEventListener('change', syncHint);
+			newFolder.addEventListener('input', syncHint);
+			name.addEventListener('input', syncHint);
+			syncHint();
+			nfsModeRow = E('div', { class: 'nas-field', style: 'margin:-4px 0 0 34px' }, [
+				E('label', {}, _('Access over NFS')), nfsMode,
+				E('div', { class: 'nas-hint' }, [ _('On Linux:'), ' ', hint ])
+			]);
+			nfsOn.addEventListener('change', () => { nfsModeRow.style.display = nfsOn.checked ? '' : 'none'; });
+		}
+
+		const syncTm = () => {
+			capRow.style.display = tm.checked ? '' : 'none';
+			recycleRow.style.display = tm.checked ? 'none' : '';
+			/* Time Machine folders never go over NFS: changes outside Time Machine break its backups */
+			if (nfsOn) {
+				nfsRow.style.display = tm.checked ? 'none' : '';
+				nfsModeRow.style.display = (!tm.checked && nfsOn.checked) ? '' : 'none';
+			}
+		};
 		tm.addEventListener('change', syncTm);
 		syncTm();
 
@@ -134,6 +176,8 @@ return view.extend({
 					E('span', {}, _('Macs can use this share as a Time Machine backup disk.')) ]) ]),
 				capRow,
 				recycleRow,
+				nfsRow,
+				nfsModeRow,
 				err
 			]),
 			E('div', { class: 'right' }, [
@@ -143,11 +187,14 @@ return view.extend({
 					const folder = create ? newFolder.value.trim() : folderSel.value;
 					if (!name.value.trim()) { err.textContent = _('Please enter a share name.'); return; }
 					if (!folder) { err.textContent = _('Please choose or name a folder.'); return; }
+					/* NFS: 'rw' / 'ro' / '' (off); undefined (not sent) when the plugin isn't installed */
+					const nfsWanted = nfsOn ? ((nfsOn.checked && !tm.checked) ? nfsMode.value : '') : undefined;
 					return nas.callShareSave(s.id || '', name.value.trim(), folder, create, access,
-						guest.checked, tm.checked, tm.checked ? (parseInt(cap.value, 10) || 0) : 0, !tm.checked && recycle.checked).then((res) => {
+						guest.checked, tm.checked, tm.checked ? (parseInt(cap.value, 10) || 0) : 0, !tm.checked && recycle.checked, nfsWanted).then((res) => {
 						if (res && res.error) { err.textContent = res.error; return; }
 						ui.hideModal();
-						nas.notify(isNew ? _('Share "%s" created.').format(name.value.trim()) : _('Share "%s" saved.').format(name.value.trim()));
+						if (res && res.warning) nas.notify(res.warning, 'warning');
+						else nas.notify(isNew ? _('Share "%s" created.').format(name.value.trim()) : _('Share "%s" saved.').format(name.value.trim()));
 						return this.refresh();
 					});
 				}) }, isNew ? _('Create share') : _('Save'))
@@ -161,7 +208,7 @@ return view.extend({
 			_('The share disappears from the network. The folder and its files stay on the disk.'),
 			_('Delete share'),
 			() => nas.callShareDelete(s.id).then((res) => {
-				if (!res || !res.error) { nas.notify(_('Share "%s" deleted.').format(s.name)); this.refresh(); }
+				if (!res || !res.error) { nas.notify(res && res.warning ? res.warning : _('Share "%s" deleted.').format(s.name), res && res.warning ? 'warning' : undefined); this.refresh(); }
 				return res;
 			}), true);
 	},

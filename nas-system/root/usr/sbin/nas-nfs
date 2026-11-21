@@ -1,0 +1,144 @@
+#!/bin/sh
+# nas-nfs: the NFS share list of the optional NFS plugin. Used by plugins.sh nfs and by the
+# dashboard (Shares page, Services card), so both always agree. Does nothing useful until the
+# plugin installed the NFS server (nfs-kernel-server).
+#
+#   nas-nfs state                       running | off | stopped | missing (not installed)
+#   nas-nfs list                        one line per shared folder: <folder><TAB><who><TAB><rw|ro>
+#   nas-nfs add <folder> <rw|ro> [who]  share /mnt/data/<folder>. who: an IPv4 address or network;
+#                                       default: what the folder had before, else the home network
+#   nas-nfs del <folder>                stop sharing a folder (files stay)
+#   nas-nfs enable | disable            switch the NFS server on or off; the share list stays
+#   nas-nfs lan                         the home network, e.g. 192.168.1.0/24
+#   nas-nfs status                      the above for people: state, shared folders, connected computers
+#   nas-nfs remove                      switch off and uninstall the NFS server; the share list is
+#                                       saved as /etc/exports.removed (used by plugins.sh nfs uninstall)
+#
+# Export options (exports(5), nfs-utils 2.8.4):
+#   sync           write to disk before answering
+#   subtree_check  only files inside the shared folder are reachable, not the rest of /mnt/data
+#   all_squash,anonuid=0,anongid=0
+#                  every client acts as root, like Samba here (force_root): share files belong to
+#                  root (0644/0755), so any other user couldn't write to them
+#   insecure       accept clients from ports above 1023; macOS connects from those by default
+
+DATA=/mnt/data
+EX=/etc/exports
+OPTS='sync,subtree_check,all_squash,anonuid=0,anongid=0,insecure'
+
+die() { echo "$*" >&2; exit 1; }
+installed() { [ -x /etc/init.d/nfsd ] && [ -x /usr/sbin/exportfs ]; }
+need() { installed || die "The NFS server isn't installed (./plugins.sh nfs install)."; }
+
+# the same rule as folder names on the dashboard (valid_folder_name in luci.nas)
+folder_ok() {
+	case "$1" in *..*|*/*|*"
+"*) return 1 ;; esac
+	printf '%s\n' "$1" | grep -qxE '[A-Za-z0-9][A-Za-z0-9_. -]{0,63}'
+}
+
+# one IPv4 address, or a network with a prefix of /8 to /32
+who_ok() {
+	printf '%s\n' "$1" | grep -qxE '([0-9]{1,3}\.){3}[0-9]{1,3}(/([89]|[12][0-9]|3[0-2]))?' || return 1
+	printf '%s\n' "${1%/*}" | awk -F. '{ for (i = 1; i <= 4; i++) if ($i > 255) exit 1 }'
+}
+
+lan() {
+	a=$(ip -4 -o addr show br-lan 2>/dev/null | awk '{ print $4; exit }')
+	[ -n "$a" ] || return 1
+	/bin/ipcalc.sh "$a" | awk -F= '/^NETWORK=/ { n = $2 } /^PREFIX=/ { p = $2 } END { if (n != "" && p != "") print n "/" p }'
+}
+
+# our lines: "/mnt/data/<folder>" <who>(<options>)
+list() {
+	[ -f $EX ] || return 0
+	awk -v base="$DATA/" '/^"/ {
+		s = substr($0, 2); i = index(s, "\""); path = substr(s, 1, i - 1)
+		if (index(path, base) != 1) next
+		rest = substr(s, i + 2); j = index(rest, "("); who = substr(rest, 1, j - 1)
+		printf "%s\t%s\t%s\n", substr(path, length(base) + 1), who, (rest ~ /\(ro[,)]/) ? "ro" : "rw"
+	}' $EX
+}
+
+# write the list without the line for $1 (plus an optional new line $2), in one step
+rewrite() {
+	touch $EX
+	awk -v p="\"$DATA/$1\" " 'index($0, p) != 1' $EX > $EX.nas-new
+	[ -z "$2" ] || printf '%s\n' "$2" >> $EX.nas-new
+	chmod 644 $EX.nas-new
+	mv $EX.nas-new $EX
+	# applies now if the server runs; otherwise when it is switched on
+	if /etc/init.d/nfsd running >/dev/null 2>&1; then exportfs -ra; fi
+}
+
+timemachine() {
+	for s in $(uci -q -X show samba4 | sed -n 's/^samba4\.\([^.=]*\)=sambashare$/\1/p'); do
+		[ "$(uci -q get samba4.$s.timemachine)" = 1 ] || continue
+		p=$(uci -q get samba4.$s.path)
+		[ "${p%/}" = "$1" ] && return 0
+	done
+	return 1
+}
+
+case "$1" in
+	state)
+		if ! installed; then echo missing
+		elif ! /etc/init.d/nfsd enabled; then echo off
+		elif /etc/init.d/nfsd running >/dev/null 2>&1; then echo running
+		else echo stopped; fi ;;
+	list) list ;;
+	lan) lan ;;
+	add)
+		need
+		folder=$2; mode=$3; who=$4
+		folder_ok "$folder" || die "Not a valid folder name."
+		case "$mode" in rw|ro) ;; *) die "Use rw or ro." ;; esac
+		d="$DATA/$folder"
+		[ -d "$d" ] && [ ! -L "$d" ] || die "There's no folder $d."
+		timemachine "$d" && die "$d is a Time Machine share. Changes made over NFS would break its backups."
+		[ -n "$who" ] || who=$(list | awk -F'\t' -v f="$folder" '$1 == f { print $2; exit }')
+		[ -n "$who" ] || who=$(lan) || true
+		who_ok "$who" || die "Who may connect must be an IPv4 address or network, like 192.168.1.20 or 192.168.1.0/24."
+		rewrite "$folder" "\"$d\" $who($mode,$OPTS)"
+		logger -t nas-nfs "sharing $d with $who ($mode)" ;;
+	del)
+		folder=$2
+		folder_ok "$folder" || die "Not a valid folder name."
+		list | awk -F'\t' -v f="$folder" '$1 == f { found = 1 } END { exit !found }' || exit 0
+		rewrite "$folder"
+		logger -t nas-nfs "stopped sharing $DATA/$folder" ;;
+	enable)
+		need
+		/etc/init.d/rpcbind enable; /etc/init.d/rpcbind start
+		/etc/init.d/nfsd enable; /etc/init.d/nfsd restart
+		logger -t nas-nfs "NFS server switched on" ;;
+	disable)
+		need
+		/etc/init.d/nfsd stop >/dev/null 2>&1; /etc/init.d/nfsd disable
+		/etc/init.d/rpcbind stop >/dev/null 2>&1; /etc/init.d/rpcbind disable
+		logger -t nas-nfs "NFS server switched off (share list kept)" ;;
+	status)
+		case "$($0 state)" in
+			missing) echo "NFS server: not installed"; exit 0 ;;
+			running) echo "NFS server: running" ;;
+			off)     echo "NFS server: switched off (the share list is kept)" ;;
+			*)       echo "NFS server: switched on, but NOT running" ;;
+		esac
+		echo; echo "Shared folders:"
+		list | awk -F'\t' -v base="$DATA/" '{ printf "  %-34s %-18s %s\n", base $1, $2, ($3 == "ro") ? "read-only" : "read-write"; n++ }
+			END { if (!n) print "  none" }'
+		echo; echo "Connected computers:"
+		netstat -tn 2>/dev/null | awk '$4 ~ /:2049$/ && $6 == "ESTABLISHED" { sub(/:[0-9]+$/, "", $5); print "  " $5 }' | sort -u | grep . || echo "  none" ;;
+	remove)
+		need
+		$0 disable >/dev/null 2>&1
+		[ -s $EX ] && cp $EX $EX.removed
+		apk del nfs-kernel-server || die "apk del nfs-kernel-server failed."
+		rm -f $EX
+		grep -vxF $EX /etc/sysupgrade.conf > /tmp/sysupgrade.conf.nas-new
+		cat /tmp/sysupgrade.conf.nas-new > /etc/sysupgrade.conf; rm -f /tmp/sysupgrade.conf.nas-new
+		logger -t nas-nfs "NFS server removed"
+		echo "removed."
+		[ -f $EX.removed ] && echo "Your NFS share list was saved in $EX.removed." ;;
+	*) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

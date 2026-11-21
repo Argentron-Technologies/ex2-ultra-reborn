@@ -31,6 +31,7 @@
 					"names_set",
 					"power",
 					"idle_poweroff_set",
+					"nfs_set",
 					"wol_set",
 					"recycle_set",
 					"disk_sleep_set",
