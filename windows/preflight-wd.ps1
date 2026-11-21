@@ -98,16 +98,23 @@ if ($Backup) {
 	# One SSH session dumps every partition, one after another, into a single file. The file
 	# is written by cmd.exe's ">" redirect, which keeps the bytes exactly as sent (a
 	# PowerShell pipe or Start-Process redirect would treat them as text and corrupt them).
-	# nanddump (as the OpenWrt wiki suggests) when the WD firmware has it, else a plain read.
-	$nd = (0..7 | ForEach-Object { "nanddump -q /dev/mtd$_" }) -join '; '
-	$ct = (0..7 | ForEach-Object { "cat /dev/mtd$_" }) -join '; '
-	$remote = "if command -v nanddump >/dev/null 2>&1; then $nd; else $ct; fi"
-	$line = "ssh -o ConnectTimeout=8 $Target `"$remote`" > `"$stream`""
+	# Each partition is read by the same line as in preflight-wd.sh (DUMP_ONE; keep both
+	# identical): nanddump (as the OpenWrt wiki suggests) when the WD firmware has it, else a plain
+	# read. Stock WD firmware has no /dev/mtd6 or mtd7 (issue #3): a missing one is read through a
+	# temporary READ-ONLY device file /dev/ex2rb-mtdNro (the kernel's mtdNro, minor 2N+1, which
+	# refuses writes), removed right after. Not in /tmp: it is often mounted nodev.
+	# Single-quoted here, so PowerShell doesn't expand the $ signs; no %, " or ' inside (cmd.exe).
+	$DumpOne = '(d=/dev/mtd@N@; t=/dev/ex2rb-mtd@N@ro; if [ ! -e $d ]; then v=$(cat /sys/class/mtd/mtd@N@ro/dev 2>/dev/null); [ -z $v ] && v=90:$((2*@N@+1)); rm -f $t; mknod $t c $(echo $v | cut -d: -f1) $(echo $v | cut -d: -f2) || exit 3; d=$t; fi; if command -v nanddump >/dev/null 2>&1; then nanddump -q $d; else cat $d; fi; r=$?; rm -f $t; exit $r) || exit 3'
+	$remote = (0..7 | ForEach-Object { $DumpOne.Replace('@N@', "$_") }) -join '; '
 	if ($env:OS -eq 'Windows_NT') {
+		# cmd.exe passes "..." through as is ($ means nothing to it)
+		$line = "ssh -o ConnectTimeout=8 $Target `"$remote`" > `"$stream`""
 		$runner = Join-Path ([IO.Path]::GetTempPath()) 'ex2rb-backup.cmd'
 		[IO.File]::WriteAllText($runner, "@$line`r`n")
 		& cmd.exe /c $runner
 	} else {
+		# sh would expand $ inside "...": single quotes keep the line for the NAS's shell
+		$line = "ssh -o ConnectTimeout=8 $Target '$remote' > '$stream'"
 		$runner = Join-Path ([IO.Path]::GetTempPath()) 'ex2rb-backup.sh'
 		[IO.File]::WriteAllText($runner, "$line`n")
 		& /bin/sh $runner

@@ -1,6 +1,7 @@
 #!/bin/sh
 # preflight-wd.sh: run BEFORE flashing OpenWrt, while the NAS still runs WD's firmware.
-# Read-only: it never writes anything to the NAS.
+# Read-only: it never writes to the NAS's flash, disks or settings. (The backup may create a
+# temporary read-only device file in /dev for mtd6/mtd7 and removes it right after; see DUMP_ONE.)
 #
 #   ./preflight-wd.sh <NAS IP>                 check that this is a WD My Cloud EX2 Ultra
 #   ./preflight-wd.sh <NAS IP> --backup <dir>  also copy all 8 flash partitions to <dir>
@@ -29,6 +30,17 @@ EXPECT_MTD='00500000 U-Boot
 01400000 config
 00a00000 reserve1
 00a00000 reserve2'
+
+# Reads flash partition @N@ to stdout, on the NAS. Stock WD firmware has /dev/mtd0..5 but no
+# /dev/mtd6 or mtd7 (issue #3), so a missing one is read through a temporary READ-ONLY device
+# file /dev/ex2rb-mtdNro, removed right after: the kernel's "mtdNro" (Linux 4.14 mtdcore.c:
+# major 90, minor 2N+1, also listed in /sys/class/mtd/mtdNro/dev; mtdchar.c refuses writes on
+# odd minors). It goes in /dev because /tmp is often mounted nodev (device files can't be opened
+# there; seen on OpenWrt). nanddump (as the OpenWrt wiki suggests; it opens O_RDONLY) when the
+# firmware has it, else a plain read.
+# windows/preflight-wd.ps1 has the same line ($DumpOne): keep both identical. It must stay one
+# line without %, double or single quotes (it goes through cmd.exe and sh on Windows).
+DUMP_ONE='(d=/dev/mtd@N@; t=/dev/ex2rb-mtd@N@ro; if [ ! -e $d ]; then v=$(cat /sys/class/mtd/mtd@N@ro/dev 2>/dev/null); [ -z $v ] && v=90:$((2*@N@+1)); rm -f $t; mknod $t c $(echo $v | cut -d: -f1) $(echo $v | cut -d: -f2) || exit 3; d=$t; fi; if command -v nanddump >/dev/null 2>&1; then nanddump -q $d; else cat $d; fi; r=$?; rm -f $t; exit $r) || exit 3'
 
 echo "== connecting to $NAS"
 info=$(ssh -o ConnectTimeout=8 "$NAS" '
@@ -72,8 +84,8 @@ if [ "$2" = --backup ]; then
 	n=0
 	printf '%s\n' "$mtd" | while read -r size name; do
 		f="$dir/mtd$n-$(echo "$name" | tr ' ' '_').bin"
-		# nanddump (as the OpenWrt wiki suggests) when the WD firmware has it, else a plain read
-		ssh -n "$NAS" "if command -v nanddump >/dev/null 2>&1; then nanddump -q /dev/mtd$n; else cat /dev/mtd$n; fi" > "$f"
+		ssh -n "$NAS" "$(printf '%s' "$DUMP_ONE" | sed "s/@N@/$n/g")" > "$f" || \
+			{ echo "STOP: mtd$n could not be read (ssh exit code $?). Try again." >&2; exit 1; }
 		got=$(wc -c < "$f" | tr -d ' ')
 		[ "$got" -eq $((0x$size)) ] || { echo "STOP: mtd$n read $got bytes, expected $((0x$size)). Try again." >&2; exit 1; }
 		echo "  mtd$n $name: $got bytes"

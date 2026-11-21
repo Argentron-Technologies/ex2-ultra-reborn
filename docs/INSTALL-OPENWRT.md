@@ -42,6 +42,11 @@ Read-only. Continue only if it ends with **OK**.
 It checks for WD model number `BVBZ`, 2 drive bays and the exact EX2 Ultra flash layout,
 then saves all 8 flash partitions with SHA-256 checksums.
 
+Stock WD firmware has no `/dev/mtd6` and `/dev/mtd7` (the two `reserve` partitions), although the
+kernel lists them in `/proc/mtd`. The backup reads those two through a temporary **read-only**
+device file (`/dev/ex2rb-mtd6ro`, `/dev/ex2rb-mtd7ro`) and removes it right after, so you don't
+need to create anything by hand. Nothing on the flash can be written that way.
+
 > [!TIP]
 > Keep the `wd-flash-backup` folder somewhere safe. It's your only way back to WD firmware.
 
