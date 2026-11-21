@@ -10,7 +10,8 @@
 					"shares_list",
 					"cold_status",
 					"cold_deletes",
-					"recycle_bins"
+					"recycle_bins",
+					"nfs_info"
 				]
 			},
 			"uci": [
@@ -32,6 +33,8 @@
 					"power",
 					"idle_poweroff_set",
 					"nfs_set",
+					"nfs_share_save",
+					"nfs_share_delete",
 					"wol_set",
 					"recycle_set",
 					"disk_sleep_set",

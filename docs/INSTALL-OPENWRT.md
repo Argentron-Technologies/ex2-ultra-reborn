@@ -1,6 +1,6 @@
 # Install OpenWrt
 
-[← README](../README.md) · **Install OpenWrt** · [Setup guide](SETUP-GUIDE.md) · [Windows](WINDOWS.md) · [Maintenance](MAINTENANCE.md)
+[← README](../README.md) · **Install OpenWrt** · [Setup guide](SETUP-GUIDE.md) · [Windows](WINDOWS.md) · [NFS](NFS.md) · [Maintenance](MAINTENANCE.md)
 
 Replace WD's firmware with OpenWrt. This takes about 30 minutes, and **your disks and data
 are not touched**. The steps follow the official

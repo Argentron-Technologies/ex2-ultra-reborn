@@ -409,14 +409,35 @@ function nfs_state() {
 	return length(s) ? s : 'missing';
 }
 
-/* folder -> { who, mode } */
+/* folder -> { who: 'rw' | 'ro', ... }; who is an IPv4 address or network */
 function nfs_list() {
 	let out = {};
 	for (let l in split(sh(`${NFS} list 2>/dev/null`), '\n')) {
 		let f = split(l, '\t');
-		if (length(f) == 3) out[f[0]] = { who: f[1], mode: f[2] };
+		if (length(f) != 3) continue;
+		out[f[0]] ??= {};
+		out[f[0]][f[1]] = f[2];
 	}
 	return out;
+}
+
+/* the named computers: [ { name, ip } ] */
+function nfs_computers() {
+	let out = [];
+	for (let l in split(sh(`${NFS} computers 2>/dev/null`), '\n')) {
+		let f = split(l, '\t');
+		if (length(f) == 2 && length(f[1])) push(out, { name: f[0], ip: f[1] });
+	}
+	return out;
+}
+
+/* an IPv4 address, or a network /8 to /32 (nas-nfs checks the same again) */
+function valid_nfs_who(w) {
+	if (type(w) != 'string') return false;
+	let m = match(w, /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})(\/([0-9]{1,2}))?$/);
+	if (!m) return false;
+	for (let i = 1; i <= 4; i++) if (+m[i] > 255) return false;
+	return m[6] == null || (+m[6] >= 8 && +m[6] <= 32);
 }
 
 /* runs nas-nfs; returns null on success, else its message */
@@ -433,14 +454,6 @@ function data_folder(path) {
 	if (type(path) != 'string' || index(path, DATA + '/') != 0) return null;
 	let f = substr(path, length(DATA) + 1);
 	return valid_folder_name(f) ? f : null;
-}
-
-/* is this path still used by a share other than skip_id? */
-function path_shared(path, skip_id) {
-	let used = false, c = cursor();
-	c.load('samba4');
-	c.foreach('samba4', 'sambashare', (s) => { if (s['.name'] != skip_id && s.path == path) used = true; });
-	return used;
 }
 
 /* ------------------------------------------------------------------ methods */
@@ -732,26 +745,12 @@ const methods = {
 
 	shares_list: {
 		call: function() {
-			let shares = share_list(), state = nfs_state(), nfs = null;
-			if (state != 'missing') {
-				let exp = nfs_list();
-				for (let s in shares) {
-					let e = exp[data_folder(s.path) ?? ''];
-					s.nfs = e ? e.mode : null;
-					s.nfs_who = e ? e.who : null;
-				}
-				/* ip: for the mount hint. An IPv4 address, not nas.local: .local can resolve to the
-				 * link-local IPv6 address, which isn't in the allowed network */
-				let ip = trim(sh("ip -4 -o addr show br-lan 2>/dev/null | awk '{ split($4, a, \"/\"); print a[1]; exit }'"));
-				nfs = { state: state, lan: trim(sh(`${NFS} lan 2>/dev/null`)), ip: ip };
-			}
-			return { shares: shares, folders: folder_list(), users: nas_users(), base: DATA, recycle_global: recycle_global(), nfs: nfs };
+			return { shares: share_list(), folders: folder_list(), users: nas_users(), base: DATA, recycle_global: recycle_global() };
 		}
 	},
 
 	share_save: {
-		/* nfs: 'rw' | 'ro' | '' (not over NFS); anything else leaves NFS as it is */
-		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0, recycle: true, nfs: 'nfs' },
+		args: { id: 'id', name: 'name', folder: 'folder', create: false, access: {}, guest: false, timemachine: false, tm_cap: 0, recycle: true },
 		call: function(req) {
 			let a = req.args;
 			if (!valid_share_name(a.name))
@@ -786,7 +785,6 @@ const methods = {
 
 			let id = a.id;
 			if (!id || !c.get('samba4', id)) id = c.add('samba4', 'sambashare');
-			let oldpath = c.get('samba4', id, 'path');
 
 			c.set('samba4', id, 'name', a.name);
 			c.set('samba4', id, 'path', path);
@@ -821,19 +819,13 @@ const methods = {
 			reload_samba();
 			refresh_names();
 
-			/* NFS (optional plugin): the folder follows the share. Time Machine folders never go
-			 * over NFS (changes outside Time Machine break its backups). */
-			if (a.nfs in [ 'rw', 'ro', '' ] && nfs_state() != 'missing') {
-				let exp = nfs_list(), err = null;
-				let old = data_folder(oldpath);
-				/* the share moved to another folder: the old one stops, unless another share still uses it */
-				if (old && old != a.folder && exp[old] && !path_shared(oldpath, id))
-					err = nfs_run(`del ${shq(old)}`);
-				if (!err) {
-					if (a.nfs != '' && !a.timemachine) err = nfs_run(`add ${shq(a.folder)} ${a.nfs}`);
-					else if (exp[a.folder]) err = nfs_run(`del ${shq(a.folder)}`);
-				}
+			/* NFS shares are set on their own page and don't follow SMB shares, with one exception:
+			 * a folder that becomes a Time Machine share stops being shared over NFS (changes made
+			 * outside Time Machine break its backups) */
+			if (a.timemachine && nfs_state() != 'missing' && nfs_list()[a.folder]) {
+				let err = nfs_run(`set ${shq(a.folder)}`);
 				if (err) return { ok: true, id: id, warning: `The share was saved, but NFS: ${err}` };
+				return { ok: true, id: id, warning: `Share saved. "${a.folder}" is no longer shared over NFS: Time Machine folders can't be.` };
 			}
 			return { ok: true, id: id };
 		}
@@ -845,18 +837,11 @@ const methods = {
 			let c = cursor();
 			c.load('samba4');
 			if (c.get('samba4', req.args.id) != 'sambashare') return { error: 'Unknown share.' };
-			let path = c.get('samba4', req.args.id, 'path');
 			c.delete('samba4', req.args.id);
 			c.commit('samba4');
 			reload_samba();
 			refresh_names();
-			/* NFS: the folder stops too, unless another share still uses it (files stay) */
-			let f = data_folder(path);
-			if (f && nfs_state() != 'missing' && nfs_list()[f] && !path_shared(path, null)) {
-				let err = nfs_run(`del ${shq(f)}`);
-				if (err) return { ok: true, warning: `The share was deleted, but NFS: ${err}` };
-			}
-			return { ok: true };
+			return { ok: true };   /* an NFS share of the same folder stays (it has its own page) */
 		}
 	},
 
@@ -991,15 +976,113 @@ const methods = {
 	},
 
 
-	// NFS server on/off (optional plugin); the share list stays either way
-	nfs_set: {
-		args: { enabled: false },
+	// NFS page (optional plugin): server state, named computers, NFS shares, and the folders
+	// that can be shared (every folder in /mnt/data, with the SMB shares that use it; Time
+	// Machine folders are marked, they can't be shared over NFS)
+	nfs_info: {
+		call: function() {
+			let state = nfs_state();
+			if (state == 'missing') return { state: state };
+			let smb = {}, tm = {};
+			for (let s in share_list()) {
+				let f = data_folder(s.path);
+				if (!f) continue;
+				push(smb[f] ??= [], s.name);
+				if (s.timemachine) tm[f] = true;
+			}
+			let exp = nfs_list();
+			let shares = map(sort(keys(exp), (a, b) => (lc(a) < lc(b)) ? -1 : 1), (f) => {
+				let st = lstat(`${DATA}/${f}`);
+				return { folder: f, path: `${DATA}/${f}`, exists: !!(st && st.type == 'directory'),
+					access: exp[f], smb: smb[f] ?? [] };
+			});
+			let folders = map(folder_list(), (f) => ({ name: f, smb: smb[f] ?? [], timemachine: !!tm[f], nfs: !!exp[f] }));
+			/* ip: for the mount hint. An IPv4 address, not nas.local: .local can resolve to the
+			 * link-local IPv6 address, which isn't in the allowed network */
+			let ip = trim(sh("ip -4 -o addr show br-lan 2>/dev/null | awk '{ split($4, a, \"/\"); print a[1]; exit }'"));
+			return { state: state, lan: trim(sh(`${NFS} lan 2>/dev/null`)), ip: ip, base: DATA,
+				computers: nfs_computers(), shares: shares, folders: folders };
+		}
+	},
+
+	// share a folder over NFS (or change who may connect). old: the folder it had, when the
+	// share moves to another folder; create: make a new folder in /mnt/data first
+	nfs_share_save: {
+		args: { folder: 'folder', old: 'old', create: false, access: {} },
 		call: function(req) {
-			if (type(req.args.enabled) != 'bool') return { error: 'Missing on/off value.' };
+			let a = req.args;
 			if (nfs_state() == 'missing') return { error: 'The NFS plugin is not installed.' };
-			let err = nfs_run(req.args.enabled ? 'enable' : 'disable');
+			if (!valid_folder_name(a.folder)) return { error: 'Please choose a valid folder.' };
+			let want = [];
+			for (let w, m in (type(a.access) == 'object' ? a.access : {}))
+				if (valid_nfs_who(w) && m in [ 'rw', 'ro' ]) push(want, shq(`${w}=${m}`));
+			if (!length(want)) return { error: 'Choose at least one computer that may connect.' };
+
+			let path = `${DATA}/${a.folder}`;
+			if (!stat(path)) {
+				if (!a.create) return { error: 'That folder does not exist.' };
+				if (!mkdir(path, 0o755)) return { error: 'Could not create the folder.' };
+				chmod(path, 0o755);
+			}
+			if (type(a.old) == 'string' && length(a.old) && a.old != a.folder && valid_folder_name(a.old)) {
+				let err = nfs_run(`set ${shq(a.old)}`);
+				if (err) return { error: err };
+			}
+			let err = nfs_run(`set ${shq(a.folder)} ${join(' ', want)}`);
 			if (err) return { error: err };
-			return { ok: true, enabled: req.args.enabled, state: nfs_state() };
+			return { ok: true };
+		}
+	},
+
+	// stop sharing a folder over NFS (the folder and its files stay)
+	nfs_share_delete: {
+		args: { folder: 'folder' },
+		call: function(req) {
+			if (nfs_state() == 'missing') return { error: 'The NFS plugin is not installed.' };
+			if (!valid_folder_name(req.args.folder)) return { error: 'Unknown folder.' };
+			let err = nfs_run(`set ${shq(req.args.folder)}`);
+			if (err) return { error: err };
+			return { ok: true };
+		}
+	},
+
+	// NFS (optional plugin): server on/off and the list of named computers. Both are optional;
+	// the folders' sharing stays either way, except that a removed computer is taken off them.
+	nfs_set: {
+		args: { enabled: false, computers: [] },
+		call: function(req) {
+			let a = req.args;
+			if (nfs_state() == 'missing') return { error: 'The NFS plugin is not installed.' };
+			if (a.computers != null) {
+				if (type(a.computers) != 'array') return { error: 'Invalid list of computers.' };
+				let names = {}, ips = {};
+				for (let c in a.computers) {
+					let n = trim(c?.name ?? ''), ip = trim(c?.ip ?? '');
+					if (!match(n, /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,31}$/))
+						return { error: `"${n}": computer names may use letters, digits, space and . _ ( ) - (max 32).` };
+					if (!valid_nfs_who(ip)) return { error: `"${ip}" is not an IPv4 address like 192.168.1.20.` };
+					if (names[lc(n)]) return { error: `The name "${n}" is used twice.` };
+					if (ips[ip]) return { error: `The address ${ip} is used twice.` };
+					names[lc(n)] = true; ips[ip] = n;
+				}
+				/* removed = neither its address nor its name is in the new list (a new address under
+				 * the same name is a change: nas-nfs moves the folders' access to the new address) */
+				for (let c in nfs_computers())
+					if (!ips[c.ip] && !names[lc(c.name)]) {
+						let err = nfs_run(`computer-del ${shq(c.ip)}`);
+						if (err) return { error: err };
+					}
+				for (let ip, n in ips) {
+					let err = nfs_run(`computer-add ${shq(n)} ${shq(ip)}`);
+					if (err) return { error: err };
+				}
+			}
+			if (a.enabled != null) {
+				if (type(a.enabled) != 'bool') return { error: 'Missing on/off value.' };
+				let err = nfs_run(a.enabled ? 'enable' : 'disable');
+				if (err) return { error: err };
+			}
+			return { ok: true, state: nfs_state(), computers: nfs_computers() };
 		}
 	},
 

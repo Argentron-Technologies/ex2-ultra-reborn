@@ -1,6 +1,6 @@
 # Windows
 
-[← README](../README.md) · [Install OpenWrt](INSTALL-OPENWRT.md) · [Setup guide](SETUP-GUIDE.md) · **Windows** · [Maintenance](MAINTENANCE.md)
+[← README](../README.md) · [Install OpenWrt](INSTALL-OPENWRT.md) · [Setup guide](SETUP-GUIDE.md) · **Windows** · [NFS](NFS.md) · [Maintenance](MAINTENANCE.md)
 
 Everything works from **PowerShell** or **Command Prompt** on Windows 10 and 11. There's
 nothing extra to install: the scripts use the `ssh`, `scp` and `tar` that come with Windows.

@@ -32,5 +32,16 @@
 			"type": "view",
 			"path": "nas/shares"
 		}
+	},
+	"admin/nas/nfs": {
+		"title": "NFS",
+		"order": 35,
+		"action": {
+			"type": "view",
+			"path": "nas/nfs"
+		},
+		"depends": {
+			"fs": { "/etc/init.d/nfsd": "executable" }
+		}
 	}
 }

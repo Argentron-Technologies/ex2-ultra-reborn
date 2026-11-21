@@ -202,24 +202,36 @@ Trust them over forum posts, and over your own assumptions.
 **NFS** is an optional plugin (`plugins/nfs.sh`), never part of `setup.sh`:
 - Package `nfs-kernel-server` (NFSv3, fixed ports: mountd 32780, statd 32778, lockd 32777). Not
   `-v4`: that variant starts `rpc.nfsd -N 3`, and macOS mounts NFSv3. There is no `luci-app-nfs`
-  in OpenWrt 25.12, and no UCI config: the share list is `/etc/exports` (a conffile).
+  in OpenWrt 25.12. The NFS shares are `/etc/exports` (a conffile); the named computers are
+  `/etc/config/nas-nfs` (`config computer`, `name`, `ip`).
+- NFS has no passwords (OpenWrt builds it with `--disable-gss`, so no Kerberos either): access is
+  per IP. One `/etc/exports` line per folder, one `who(options)` per computer:
+  `"/mnt/data/<folder>" 192.168.1.0/24(ro,…) 192.168.1.20(rw,…)`. A host entry wins over a
+  network entry in both directions (verified with real mounts), and an unlisted host is refused.
+  There is no deny rule, so "No access" for one host can't beat an allowed network.
 - Export options `sync,subtree_check,all_squash,anonuid=0,anongid=0,insecure`: every client acts
   as root like Samba's `force_root` (shares are root-owned 0644/0755); `insecure` because macOS
   connects from ports above 1023. Paths are double-quoted (nfs-utils `xgettok` handles quotes).
-- `add` refuses Time Machine shares (`samba4.<id>.timemachine=1`) and anything but a real folder
+- Refused: Time Machine folders (`samba4.<id>.timemachine=1`) and anything but a real folder
   directly in `/mnt/data`. Tested in a VM with Linux (kernel NFS client) and macOS clients.
 - `nas-watch` idle power-off counts NFS (2049) connections like SMB (445).
-- **One owner of the share list: `/usr/sbin/nas-nfs`** (`state`, `list`, `add`, `del`, `enable`,
-  `disable`, `status`, `remove`). `plugins/nfs.sh` and the dashboard (`luci.nas`: `shares_list`,
-  `share_save` arg `nfs` = `rw`/`ro`/`''`, `share_delete`, `nfs_set`, Services row `nfs`) only call
-  it. `setup.sh` installs it always; without the package, `state` is `missing` and the dashboard
-  shows no NFS controls. Send `nfs` as `undefined` (LuCI drops it) to leave NFS unchanged: rpcd
-  rejects a `null` for a string argument.
-- A share moved to another folder moves its export; deleting a share drops its export unless
-  another share uses the same folder. Off (`disable`) stops nfsd and rpcbind and their boot links,
-  keeping `/etc/exports`.
+- **One owner: `/usr/sbin/nas-nfs`** (`state`, `list`, `set`, `add`, `del`, `computers`,
+  `computer-add`, `computer-del`, `enable`, `disable`, `status`, `remove`). `set <folder>
+  who=mode…` writes a folder's whole list (none = not shared). `computer-add` with a known name
+  and a new address moves that computer's access on every folder; `computer-del` takes it off
+  every folder. `plugins/nfs.sh` and the dashboard only call it. `setup.sh` installs it always;
+  without the package `state` is `missing`.
+- Dashboard: its own page `view/nas/nfs.js` (menu `admin/nas/nfs`, shown only when
+  `/etc/init.d/nfsd` is executable via `depends.fs`; install/uninstall clear
+  `/tmp/luci-indexcache*`). Backend `luci.nas`: `nfs_info`, `nfs_share_save` (`folder`, `old`,
+  `create`, `access` = { who: 'rw'|'ro' }), `nfs_share_delete`, `nfs_set` (`enabled` and/or
+  `computers`; arguments left out are unchanged). NFS shares are independent of SMB shares (any
+  folder, also an SMB-shared one); the only link: an SMB share that becomes Time Machine takes
+  its folder off NFS (`share_save` returns a `warning`).
 - The package creates a system account `nfs` (uid 32768+). It's in `RESERVED_USERS`, which
   `is_nas_user` also checks, so it never appears on the Users page.
+- Docs: `docs/NFS.md` (screenshots `docs/images/nfs-*.png`, taken on the test VM with example
+  computers).
 
 **Deliberately out of scope** (tried, then removed at the owner's request; don't re-add
 without being asked)

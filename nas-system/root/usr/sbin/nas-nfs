@@ -3,18 +3,27 @@
 # dashboard (Shares page, Services card), so both always agree. Does nothing useful until the
 # plugin installed the NFS server (nfs-kernel-server).
 #
+# NFS has no passwords: each shared folder lists the computers (IPv4 addresses, or a whole
+# network) that may connect, each read-write or read-only. Named computers are kept in
+# /etc/config/nas-nfs, so the dashboard can show "Linux PC" instead of 192.168.1.20.
+#
 #   nas-nfs state                       running | off | stopped | missing (not installed)
-#   nas-nfs list                        one line per shared folder: <folder><TAB><who><TAB><rw|ro>
-#   nas-nfs add <folder> <rw|ro> [who]  share /mnt/data/<folder>. who: an IPv4 address or network;
-#                                       default: what the folder had before, else the home network
-#   nas-nfs del <folder>                stop sharing a folder (files stay)
+#   nas-nfs list                        one line per folder and computer: <folder><TAB><who><TAB><rw|ro>
+#   nas-nfs set <folder> [who=rw|ro ...] the complete list for a folder; no who = not shared
+#   nas-nfs add <folder> <rw|ro> [who]  add or change one computer (default: the home network)
+#   nas-nfs del <folder> [who]          stop sharing a folder, or only with that one computer
+#   nas-nfs computers                   the named computers: <name><TAB><ip>
+#   nas-nfs computer-add <name> <ip>    add a named computer (or rename the one with that ip)
+#   nas-nfs computer-del <name|ip>      remove it, and take it off every shared folder
 #   nas-nfs enable | disable            switch the NFS server on or off; the share list stays
 #   nas-nfs lan                         the home network, e.g. 192.168.1.0/24
-#   nas-nfs status                      the above for people: state, shared folders, connected computers
+#   nas-nfs status                      the above for people
 #   nas-nfs remove                      switch off and uninstall the NFS server; the share list is
 #                                       saved as /etc/exports.removed (used by plugins.sh nfs uninstall)
 #
-# Export options (exports(5), nfs-utils 2.8.4):
+# who: an IPv4 address (192.168.1.20), a network (192.168.1.0/24), or a computer's name.
+#
+# Export options (exports(5), nfs-utils 2.8.4), the same for every computer:
 #   sync           write to disk before answering
 #   subtree_check  only files inside the shared folder are reachable, not the rest of /mnt/data
 #   all_squash,anonuid=0,anongid=0
@@ -24,6 +33,7 @@
 
 DATA=/mnt/data
 EX=/etc/exports
+CONF=nas-nfs
 OPTS='sync,subtree_check,all_squash,anonuid=0,anongid=0,insecure'
 
 die() { echo "$*" >&2; exit 1; }
@@ -37,8 +47,14 @@ folder_ok() {
 	printf '%s\n' "$1" | grep -qxE '[A-Za-z0-9][A-Za-z0-9_. -]{0,63}'
 }
 
+name_ok() {
+	case "$1" in *"
+"*) return 1 ;; esac
+	printf '%s\n' "$1" | grep -qxE '[A-Za-z0-9][A-Za-z0-9 ._()-]{0,31}'
+}
+
 # one IPv4 address, or a network with a prefix of /8 to /32
-who_ok() {
+ip_ok() {
 	printf '%s\n' "$1" | grep -qxE '([0-9]{1,3}\.){3}[0-9]{1,3}(/([89]|[12][0-9]|3[0-2]))?' || return 1
 	printf '%s\n' "${1%/*}" | awk -F. '{ for (i = 1; i <= 4; i++) if ($i > 255) exit 1 }'
 }
@@ -49,14 +65,31 @@ lan() {
 	/bin/ipcalc.sh "$a" | awk -F= '/^NETWORK=/ { n = $2 } /^PREFIX=/ { p = $2 } END { if (n != "" && p != "") print n "/" p }'
 }
 
-# our lines: "/mnt/data/<folder>" <who>(<options>)
+computer_sections() { uci -q -X show $CONF | sed -n "s/^$CONF\.\([^.=]*\)=computer\$/\1/p"; }
+
+computers() {
+	for s in $(computer_sections); do
+		printf '%s\t%s\n' "$(uci -q get $CONF.$s.name)" "$(uci -q get $CONF.$s.ip)"
+	done
+}
+
+# a who given as a computer name becomes its address; addresses stay as they are
+resolve() {
+	if ip_ok "$1"; then echo "$1"; return; fi
+	computers | awk -F'\t' -v n="$1" '$1 == n { print $2; found = 1; exit } END { exit !found }'
+}
+
+# our lines: "/mnt/data/<folder>" <who>(<options>) <who>(<options>) ...
 list() {
 	[ -f $EX ] || return 0
 	awk -v base="$DATA/" '/^"/ {
 		s = substr($0, 2); i = index(s, "\""); path = substr(s, 1, i - 1)
 		if (index(path, base) != 1) next
-		rest = substr(s, i + 2); j = index(rest, "("); who = substr(rest, 1, j - 1)
-		printf "%s\t%s\t%s\n", substr(path, length(base) + 1), who, (rest ~ /\(ro[,)]/) ? "ro" : "rw"
+		n = split(substr(s, i + 1), c, /[ \t]+/)
+		for (k = 1; k <= n; k++) {
+			j = index(c[k], "("); if (j < 2) continue
+			printf "%s\t%s\t%s\n", substr(path, length(base) + 1), substr(c[k], 1, j - 1), (c[k] ~ /\(ro[,)]/) ? "ro" : "rw"
+		}
 	}' $EX
 }
 
@@ -80,6 +113,35 @@ timemachine() {
 	return 1
 }
 
+# set <folder> [who=mode ...]: the complete list of computers for one folder
+cmd_set() {
+	folder=$1; shift
+	folder_ok "$folder" || die "Not a valid folder name."
+	d="$DATA/$folder"
+	line="\"$d\""; seen=" "
+	for kv in "$@"; do
+		who=$(resolve "${kv%=*}") || die "Unknown computer '${kv%=*}'. Add it first, or use its IP address."
+		mode=${kv##*=}
+		case "$mode" in rw|ro) ;; *) die "Use rw or ro for $who." ;; esac
+		case "$seen" in *" $who "*) continue ;; esac
+		seen="$seen$who "
+		line="$line $who($mode,$OPTS)"
+	done
+	if [ "$seen" = " " ]; then
+		list | awk -F'\t' -v f="$folder" '$1 == f { x = 1 } END { exit !x }' || return 0
+		rewrite "$folder"
+		logger -t nas-nfs "stopped sharing $d"
+		return 0
+	fi
+	[ -d "$d" ] && [ ! -L "$d" ] || die "There's no folder $d."
+	timemachine "$d" && die "$d is a Time Machine share. Changes made over NFS would break its backups."
+	rewrite "$folder" "$line"
+	logger -t nas-nfs "sharing $d with$(echo "$seen" | sed 's/ $//')"
+}
+
+# the folder's current list as who=mode arguments, leaving out one who
+current() { list | awk -F'\t' -v f="$1" -v skip="$2" '$1 == f && $2 != skip { printf "%s=%s\n", $2, $3 }'; }
+
 case "$1" in
 	state)
 		if ! installed; then echo missing
@@ -88,25 +150,66 @@ case "$1" in
 		else echo stopped; fi ;;
 	list) list ;;
 	lan) lan ;;
+	computers) computers ;;
+	set)
+		need
+		shift; cmd_set "$@" ;;
 	add)
 		need
-		folder=$2; mode=$3; who=$4
+		folder=$2; mode=$3; who=${4:-$(lan)}
 		folder_ok "$folder" || die "Not a valid folder name."
 		case "$mode" in rw|ro) ;; *) die "Use rw or ro." ;; esac
-		d="$DATA/$folder"
-		[ -d "$d" ] && [ ! -L "$d" ] || die "There's no folder $d."
-		timemachine "$d" && die "$d is a Time Machine share. Changes made over NFS would break its backups."
-		[ -n "$who" ] || who=$(list | awk -F'\t' -v f="$folder" '$1 == f { print $2; exit }')
-		[ -n "$who" ] || who=$(lan) || true
-		who_ok "$who" || die "Who may connect must be an IPv4 address or network, like 192.168.1.20 or 192.168.1.0/24."
-		rewrite "$folder" "\"$d\" $who($mode,$OPTS)"
-		logger -t nas-nfs "sharing $d with $who ($mode)" ;;
+		who=$(resolve "$who") || die "Unknown computer '$4'. Add it first, or use its IP address."
+		# shellcheck disable=SC2046 # one who=mode per line, no spaces in them
+		cmd_set "$folder" $(current "$folder" "$who") "$who=$mode" ;;
 	del)
 		folder=$2
 		folder_ok "$folder" || die "Not a valid folder name."
-		list | awk -F'\t' -v f="$folder" '$1 == f { found = 1 } END { exit !found }' || exit 0
-		rewrite "$folder"
-		logger -t nas-nfs "stopped sharing $DATA/$folder" ;;
+		if [ -n "$3" ]; then
+			who=$(resolve "$3") || die "Unknown computer '$3'."
+			cmd_set "$folder" $(current "$folder" "$who")
+		else
+			cmd_set "$folder"
+		fi ;;
+	computer-add)
+		name=$2; ip=$3
+		name_ok "$name" || die "Computer names may use letters, digits, space and . _ ( ) - (max 32)."
+		ip_ok "$ip" || die "Use an IPv4 address like 192.168.1.20 (or a network like 192.168.1.0/24)."
+		touch /etc/config/$CONF
+		by_ip=""; by_name=""; old=""
+		for x in $(computer_sections); do
+			[ "$(uci -q get $CONF.$x.ip)" = "$ip" ] && by_ip=$x
+			[ "$(uci -q get $CONF.$x.name)" = "$name" ] && by_name=$x
+		done
+		if [ -n "$by_ip" ] && [ -n "$by_name" ] && [ "$by_ip" != "$by_name" ]; then
+			die "$ip is already used by '$(uci -q get $CONF.$by_ip.name)'."
+		fi
+		if [ -n "$by_ip" ]; then s=$by_ip                                     # same address: new name
+		elif [ -n "$by_name" ]; then s=$by_name; old=$(uci -q get $CONF.$s.ip)  # same name: new address
+		else s=$(uci add $CONF computer); fi
+		uci set $CONF.$s.name="$name"
+		uci set $CONF.$s.ip="$ip"
+		uci commit $CONF
+		# a new address replaces the old one on every folder, so the computer keeps its access
+		if [ -n "$old" ] && [ "$old" != "$ip" ] && installed; then
+			list | awk -F'\t' -v w="$old" '$2 == w { print $1 }' | sort -u | while IFS= read -r f; do
+				# shellcheck disable=SC2046 # one who=mode per line, no spaces in them
+				cmd_set "$f" $(current "$f" "" | sed "s|^$old=|$ip=|")
+			done
+		fi
+		logger -t nas-nfs "computer $name = $ip${old:+ (was $old)}" ;;
+	computer-del)
+		ip=$(resolve "$2") || die "Unknown computer '$2'."
+		for x in $(computer_sections); do
+			[ "$(uci -q get $CONF.$x.ip)" = "$ip" ] && uci delete $CONF.$x
+		done
+		uci commit $CONF 2>/dev/null
+		# take it off every folder (a folder left with nobody stops being shared)
+		list | awk -F'\t' -v w="$ip" '$2 == w { print $1 }' | sort -u | while IFS= read -r f; do
+			# shellcheck disable=SC2046 # one who=mode per line, no spaces in them
+			installed && cmd_set "$f" $(current "$f" "$ip")
+		done
+		logger -t nas-nfs "computer $ip removed" ;;
 	enable)
 		need
 		/etc/init.d/rpcbind enable; /etc/init.d/rpcbind start
@@ -124,9 +227,15 @@ case "$1" in
 			off)     echo "NFS server: switched off (the share list is kept)" ;;
 			*)       echo "NFS server: switched on, but NOT running" ;;
 		esac
+		echo; echo "Computers:"
+		computers | awk -F'\t' '{ printf "  %-24s %s\n", $1, $2; n++ } END { if (!n) print "  none named yet" }'
 		echo; echo "Shared folders:"
-		list | awk -F'\t' -v base="$DATA/" '{ printf "  %-34s %-18s %s\n", base $1, $2, ($3 == "ro") ? "read-only" : "read-write"; n++ }
-			END { if (!n) print "  none" }'
+		names=$(computers | awk -F'\t' '{ printf "%s=%s;", $2, $1 }')
+		list | awk -F'\t' -v base="$DATA/" -v names="$names" '
+			BEGIN { n = split(names, a, ";"); for (i = 1; i <= n; i++) { j = index(a[i], "="); if (j) nm[substr(a[i], 1, j - 1)] = substr(a[i], j + 1) } }
+			{ w = ($2 in nm) ? nm[$2] " (" $2 ")" : $2
+			  printf "  %-34s %-36s %s\n", base $1, w, ($3 == "ro") ? "read-only" : "read-write"; k++ }
+			END { if (!k) print "  none" }'
 		echo; echo "Connected computers:"
 		netstat -tn 2>/dev/null | awk '$4 ~ /:2049$/ && $6 == "ESTABLISHED" { sub(/:[0-9]+$/, "", $5); print "  " $5 }' | sort -u | grep . || echo "  none" ;;
 	remove)
@@ -140,5 +249,5 @@ case "$1" in
 		logger -t nas-nfs "NFS server removed"
 		echo "removed."
 		[ -f $EX.removed ] && echo "Your NFS share list was saved in $EX.removed." ;;
-	*) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+	*) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

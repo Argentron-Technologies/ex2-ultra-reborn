@@ -36,7 +36,7 @@ installer. **Your existing data stays where it is.** WD's RAID 1 mirror is reuse
 | **Power** | Real power-off, Wake-on-LAN, optional idle power-off, overheat shutdown |
 | **USB** | Drives are shared automatically; one-click copy or sync of folders to cold storage |
 | **Private by default** | No cloud, no public IPv6, nothing exposed to the internet |
-| **Optional plugins** | Extras you add only if you want them, e.g. NFS shares for Linux computers (`./plugins.sh`), then switched per share on the dashboard |
+| **Optional plugins** | Extras you add only if you want them: [NFS shares](docs/NFS.md) for Linux computers, with their own dashboard page and per-computer access |
 
 ## Supported hardware
 
@@ -72,10 +72,11 @@ ssh-copy-id $NAS
 ./setup.sh install      # dashboard, fan control, alerts, disk sleep
 ssh $NAS reboot
 ./setup.sh alerts       # optional: e-mail alerts (Gmail works, port 587)
+./plugins.sh nfs install # optional: NFS shares for Linux computers
 ```
 
-Optional extras, such as NFS shares for Linux computers, are separate plugins:
-`./plugins.sh` lists them (Windows: `.\plugins.cmd`). See [Optional plugins](docs/SETUP-GUIDE.md#9-optional-plugins).
+Plugins are extras that `setup.sh` never installs: `./plugins.sh` lists them (Windows:
+`.\plugins.cmd`). See [Optional plugins](docs/SETUP-GUIDE.md#9-optional-plugins).
 
 Then open `http://nas.local` and create your users and shares. For e-mail alerts with Gmail
 or your own mail server, see [e-mail alerts](docs/SETUP-GUIDE.md#8-e-mail-alerts-optional).
@@ -88,6 +89,7 @@ The [setup guide](docs/SETUP-GUIDE.md) walks through every step with screenshots
 | [Install OpenWrt](docs/INSTALL-OPENWRT.md) | Flash backup, flashing over SSH, first boot, recovery |
 | [Setup guide](docs/SETUP-GUIDE.md) | `setup.sh` step by step, dashboard tour, connecting clients |
 | [Windows](docs/WINDOWS.md) | The PowerShell / Command Prompt scripts, using the NAS from File Explorer |
+| [NFS](docs/NFS.md) | Optional plugin: NFS shares for Linux computers, the NFS page, computers and access, mounting |
 | [Maintenance](docs/MAINTENANCE.md) | Health checks, upgrades, disks and RAID, fan, troubleshooting |
 | [Blog post](https://argentrontech.com/blog/install-openwrt-wd-my-cloud-ex2-ultra) | The whole journey for beginners: exact OpenWrt version, flashing, setup, e-mail alerts |
 | [CLAUDE.md](CLAUDE.md) | Hardware notes, rules and how to add features (for contributors and AI assistants) |
