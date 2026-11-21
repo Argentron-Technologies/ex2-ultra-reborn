@@ -136,7 +136,8 @@ return view.extend({
 	removeComputer(c, n) {
 		const d = this.data;
 		nas.confirm(_('Remove computer "%s"?').format(c.name),
-			n ? _('It loses NFS access to %d shares. The folders and files stay.').format(n) : _('It has no access to any NFS share.'),
+			n ? _('It loses NFS access to %d shares. The shares, folders and files stay; a share left without any computer shows "Nobody can connect".').format(n)
+				: _('It has no access to any NFS share.'),
 			_('Remove'),
 			() => nas.callNfsSet(undefined, (d.computers || []).filter((x) => x.ip != c.ip).map((x) => ({ name: x.name, ip: x.ip }))).then((res) => {
 				if (!res || !res.error) { nas.notify(_('Computer "%s" removed.').format(c.name)); this.refresh(); }
@@ -158,6 +159,8 @@ return view.extend({
 			if (s.smb.length) chips.push(nas.pill(_('Also SMB') + ': ' + s.smb.join(', '), 'info'));
 			if (!s.exists) chips.push(nas.pill(_('Folder missing'), 'bad'));
 			if (d.state != 'running') chips.push(nas.pill(_('Server off'), ''));
+			/* the share stays when its last computer is removed: nobody may connect until one is chosen */
+			if (!who.length) chips.push(nas.pill(_('Nobody can connect'), ''));
 			return E('div', { class: 'nas-card' }, [
 				E('div', { class: 'nas-row' }, [
 					nas.tile('folder', ''),
@@ -167,11 +170,11 @@ return view.extend({
 					])
 				]),
 				chips.length ? E('div', { class: 'nas-chips', style: 'margin-top:12px' }, chips) : '',
-				E('div', { class: 'nas-avstack' }, who.map((w) => E('span', {
+				who.length ? E('div', { class: 'nas-avstack' }, who.map((w) => E('span', {
 					class: 'nas-avitem', title: (s.access[w] == 'ro' ? _('Read only') : _('Read & write')) + ' · ' + w }, [
 					nas.avatar(w == d.lan ? 'LAN' : this.label(d, w), true), this.label(d, w),
 					E('em', {}, s.access[w] == 'ro' ? _('READ') : _('R/W'))
-				]))),
+				]))) : '',
 				E('div', { class: 'nas-card-foot' }, [
 					nas.button(_('Edit'), 'edit', () => this.shareDialog(s)),
 					nas.button(_('Stop sharing'), 'trash', () => this.stopDialog(s), 'danger')
@@ -253,7 +256,6 @@ return view.extend({
 					const create = folderSel.value === NEW_FOLDER;
 					const folder = folderName();
 					if (!folder) { err.textContent = _('Please choose or name a folder.'); return; }
-					if (!Object.keys(access).length) { err.textContent = _('Choose at least one computer that may connect.'); return; }
 					return nas.callNfsShareSave(folder, share ? share.folder : '', create, access).then((res) => {
 						if (res && res.error) { err.textContent = res.error; return; }
 						ui.hideModal();

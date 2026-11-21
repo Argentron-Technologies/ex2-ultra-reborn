@@ -215,11 +215,14 @@ Trust them over forum posts, and over your own assumptions.
 - Refused: Time Machine folders (`samba4.<id>.timemachine=1`) and anything but a real folder
   directly in `/mnt/data`. Tested in a VM with Linux (kernel NFS client) and macOS clients.
 - `nas-watch` idle power-off counts NFS (2049) connections like SMB (445).
-- **One owner: `/usr/sbin/nas-nfs`** (`state`, `list`, `set`, `add`, `del`, `computers`,
-  `computer-add`, `computer-del`, `enable`, `disable`, `status`, `remove`). `set <folder>
-  who=mode…` writes a folder's whole list (none = not shared). `computer-add` with a known name
-  and a new address moves that computer's access on every folder; `computer-del` takes it off
-  every folder. `plugins/nfs.sh` and the dashboard only call it. `setup.sh` installs it always;
+- **One owner: `/usr/sbin/nas-nfs`** (`state`, `shares`, `list`, `set`, `add`, `del`,
+  `computers`, `computer-add`, `computer-del`, `enable`, `disable`, `status`, `remove`). NFS
+  shares are remembered in `/etc/config/nas-nfs` (`config share`, `folder`) as well, because a
+  share nobody may use must have **no** exports line: a line without a client means everyone
+  (nfs-utils `exports.c`, default client `*`). `set <folder> who=mode…` writes a share's whole
+  list; with none the share stays, with nobody allowed. `del <folder>` ends the share.
+  `computer-add` with a known name and a new address moves that computer's access on every
+  share; `computer-del` takes it off every share, and the shares stay. `plugins/nfs.sh` and the dashboard only call it. `setup.sh` installs it always;
   without the package `state` is `missing`.
 - Dashboard: its own page `view/nas/nfs.js` (menu `admin/nas/nfs`, shown only when
   `/etc/init.d/nfsd` is executable via `depends.fs`; install/uninstall clear

@@ -3,18 +3,22 @@
 # dashboard (Shares page, Services card), so both always agree. Does nothing useful until the
 # plugin installed the NFS server (nfs-kernel-server).
 #
-# NFS has no passwords: each shared folder lists the computers (IPv4 addresses, or a whole
-# network) that may connect, each read-write or read-only. Named computers are kept in
-# /etc/config/nas-nfs, so the dashboard can show "Linux PC" instead of 192.168.1.20.
+# NFS has no passwords: each NFS share lists the computers (IPv4 addresses, or a whole
+# network) that may connect, each read-write or read-only. Named computers and the NFS shares
+# themselves are kept in /etc/config/nas-nfs, so the dashboard can show "Linux PC" instead of
+# 192.168.1.20, and a share whose last computer was removed stays (with nobody allowed) instead
+# of disappearing. /etc/exports only gets a line for a share with at least one computer: a line
+# without any computer would mean everyone (nfs-utils exports.c: default client "*").
 #
 #   nas-nfs state                       running | off | stopped | missing (not installed)
+#   nas-nfs shares                      the NFS shares, one folder per line (also those nobody may use)
 #   nas-nfs list                        one line per folder and computer: <folder><TAB><who><TAB><rw|ro>
-#   nas-nfs set <folder> [who=rw|ro ...] the complete list for a folder; no who = not shared
+#   nas-nfs set <folder> [who=rw|ro ...] the complete list for a share; no who = nobody may connect
 #   nas-nfs add <folder> <rw|ro> [who]  add or change one computer (default: the home network)
-#   nas-nfs del <folder> [who]          stop sharing a folder, or only with that one computer
+#   nas-nfs del <folder> [who]          stop sharing a folder, or only take that one computer off
 #   nas-nfs computers                   the named computers: <name><TAB><ip>
 #   nas-nfs computer-add <name> <ip>    add a named computer (or rename the one with that ip)
-#   nas-nfs computer-del <name|ip>      remove it, and take it off every shared folder
+#   nas-nfs computer-del <name|ip>      remove it, and take it off every share (the shares stay)
 #   nas-nfs enable | disable            switch the NFS server on or off; the share list stays
 #   nas-nfs lan                         the home network, e.g. 192.168.1.0/24
 #   nas-nfs status                      the above for people
@@ -73,6 +77,32 @@ computers() {
 	done
 }
 
+# NFS shares are remembered here too, so one stays when nobody may connect to it (no exports line)
+share_sections() { uci -q -X show $CONF | sed -n "s/^$CONF\.\([^.=]*\)=share\$/\1/p"; }
+
+shares() {
+	{
+		for s in $(share_sections); do uci -q get $CONF.$s.folder; done
+		list | cut -f1        # shares made before this list existed
+	} | grep . | sort -u
+}
+
+share_remember() {
+	for s in $(share_sections); do [ "$(uci -q get $CONF.$s.folder)" = "$1" ] && return 0; done
+	touch /etc/config/$CONF
+	s=$(uci add $CONF share)
+	uci set $CONF.$s.folder="$1"
+	uci commit $CONF
+}
+
+share_forget() {
+	for s in $(share_sections); do [ "$(uci -q get $CONF.$s.folder)" = "$1" ] && uci delete $CONF.$s; done
+	uci commit $CONF 2>/dev/null
+	return 0
+}
+
+is_share() { shares | grep -qxF "$1"; }
+
 # a who given as a computer name becomes its address; addresses stay as they are
 resolve() {
 	if ip_ok "$1"; then echo "$1"; return; fi
@@ -113,7 +143,8 @@ timemachine() {
 	return 1
 }
 
-# set <folder> [who=mode ...]: the complete list of computers for one folder
+# set <folder> [who=mode ...]: the complete list of computers for one NFS share. Without any
+# who the share stays, but nobody may connect (its exports line goes: an empty one = everyone).
 cmd_set() {
 	folder=$1; shift
 	folder_ok "$folder" || die "Not a valid folder name."
@@ -127,16 +158,26 @@ cmd_set() {
 		seen="$seen$who "
 		line="$line $who($mode,$OPTS)"
 	done
-	if [ "$seen" = " " ]; then
-		list | awk -F'\t' -v f="$folder" '$1 == f { x = 1 } END { exit !x }' || return 0
-		rewrite "$folder"
-		logger -t nas-nfs "stopped sharing $d"
-		return 0
-	fi
 	[ -d "$d" ] && [ ! -L "$d" ] || die "There's no folder $d."
 	timemachine "$d" && die "$d is a Time Machine share. Changes made over NFS would break its backups."
+	share_remember "$folder"
+	if [ "$seen" = " " ]; then
+		if list | awk -F'\t' -v f="$folder" '$1 == f { x = 1 } END { exit !x }'; then
+			rewrite "$folder"
+			logger -t nas-nfs "$d: nobody may connect now (the NFS share stays)"
+		fi
+		return 0
+	fi
 	rewrite "$folder" "$line"
 	logger -t nas-nfs "sharing $d with$(echo "$seen" | sed 's/ $//')"
+}
+
+# del <folder>: the folder is no NFS share any more (files stay)
+cmd_del() {
+	is_share "$1" || return 0
+	list | awk -F'\t' -v f="$1" '$1 == f { x = 1 } END { exit !x }' && rewrite "$1"
+	share_forget "$1"
+	logger -t nas-nfs "stopped sharing $DATA/$1"
 }
 
 # the folder's current list as who=mode arguments, leaving out one who
@@ -149,6 +190,7 @@ case "$1" in
 		elif /etc/init.d/nfsd running >/dev/null 2>&1; then echo running
 		else echo stopped; fi ;;
 	list) list ;;
+	shares) shares ;;
 	lan) lan ;;
 	computers) computers ;;
 	set)
@@ -166,10 +208,12 @@ case "$1" in
 		folder=$2
 		folder_ok "$folder" || die "Not a valid folder name."
 		if [ -n "$3" ]; then
+			# take one computer off; the share stays, even when nobody is left
 			who=$(resolve "$3") || die "Unknown computer '$3'."
-			cmd_set "$folder" $(current "$folder" "$who")
+			# shellcheck disable=SC2046 # one who=mode per line, no spaces in them
+			is_share "$folder" && cmd_set "$folder" $(current "$folder" "$who")
 		else
-			cmd_set "$folder"
+			cmd_del "$folder"
 		fi ;;
 	computer-add)
 		name=$2; ip=$3
@@ -234,8 +278,13 @@ case "$1" in
 		list | awk -F'\t' -v base="$DATA/" -v names="$names" '
 			BEGIN { n = split(names, a, ";"); for (i = 1; i <= n; i++) { j = index(a[i], "="); if (j) nm[substr(a[i], 1, j - 1)] = substr(a[i], j + 1) } }
 			{ w = ($2 in nm) ? nm[$2] " (" $2 ")" : $2
-			  printf "  %-34s %-36s %s\n", base $1, w, ($3 == "ro") ? "read-only" : "read-write"; k++ }
-			END { if (!k) print "  none" }'
+			  printf "  %-34s %-36s %s\n", base $1, w, ($3 == "ro") ? "read-only" : "read-write" }'
+		# NFS shares nobody may connect to yet
+		used=$(list | cut -f1 | sort -u)
+		shares | while IFS= read -r f; do
+			printf '%s\n' "$used" | grep -qxF "$f" || printf '  %-34s %s\n' "$DATA/$f" "nobody may connect"
+		done
+		[ -n "$(shares)" ] || echo "  none"
 		echo; echo "Connected computers:"
 		netstat -tn 2>/dev/null | awk '$4 ~ /:2049$/ && $6 == "ESTABLISHED" { sub(/:[0-9]+$/, "", $5); print "  " $5 }' | sort -u | grep . || echo "  none" ;;
 	remove)
@@ -244,6 +293,8 @@ case "$1" in
 		[ -s $EX ] && cp $EX $EX.removed
 		apk del nfs-kernel-server || die "apk del nfs-kernel-server failed."
 		rm -f $EX
+		# the NFS shares go too (a reinstall starts with none); the named computers are kept
+		for s in $(share_sections); do uci delete $CONF.$s; done; uci commit $CONF 2>/dev/null
 		grep -vxF $EX /etc/sysupgrade.conf > /tmp/sysupgrade.conf.nas-new
 		cat /tmp/sysupgrade.conf.nas-new > /etc/sysupgrade.conf; rm -f /tmp/sysupgrade.conf.nas-new
 		logger -t nas-nfs "NFS server removed"

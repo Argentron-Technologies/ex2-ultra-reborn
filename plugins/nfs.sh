@@ -51,9 +51,6 @@ nfs_folder_ok() {
 	printf '%s\n' "$1" | grep -qxE '[A-Za-z0-9][A-Za-z0-9_. -]{0,63}'
 }
 
-# the folder's current NFS lines from nas-nfs list: "<folder> <who> <rw|ro>" (tab-separated)
-nfs_line() { on "/usr/sbin/nas-nfs list | awk -F'\t' -v f='$1' '\$1 == f'" || true; }
-
 # names and addresses: no quote characters (they're passed to the NAS in single quotes)
 nfs_arg_ok() { case "$1" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*) return 1 ;; esac; }
 
@@ -106,11 +103,11 @@ nfs_del() {
 	nfs_folder_ok "$folder" || die "'$folder' isn't a folder name the NAS uses"
 	nfs_arg_ok "$who" || die "who must be a computer's name, an IP address or a network"
 	nfs_need
-	if [ -z "$(nfs_line "$folder")" ]; then
-		echo "/mnt/data/$folder isn't shared over NFS. Nothing changed."; return
+	if ! on "/usr/sbin/nas-nfs shares | grep -qxF '$folder'"; then
+		echo "/mnt/data/$folder isn't an NFS share. Nothing changed."; return
 	fi
 	on "/usr/sbin/nas-nfs del '$folder' '$who'"
-	if [ -n "$who" ]; then echo "$who can no longer use /mnt/data/$folder over NFS (the files are untouched)"
+	if [ -n "$who" ]; then echo "$who can no longer use /mnt/data/$folder over NFS (the share stays, even if nobody is left)"
 	else echo "stopped sharing /mnt/data/$folder over NFS (the folder and its files are untouched)"; fi
 }
 
@@ -126,7 +123,7 @@ nfs_computer_del() {
 	[ -n "$1" ] || die "use: $PRUN nfs computer-del <name|ip>"
 	nfs_arg_ok "$1" || die "names and addresses can't contain quotes, \\, \$ or \`"
 	nfs_need
-	ask "Remove $1? It loses NFS access to every folder." || { echo cancelled; exit 1; }
+	ask "Remove $1? It loses NFS access to every share (the shares stay)." || { echo cancelled; exit 1; }
 	on "/usr/sbin/nas-nfs computer-del '$1'"
 	echo "removed $1."
 }

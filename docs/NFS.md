@@ -36,7 +36,8 @@ Under **Computers**, choose **Add computer** and enter a name and the computer's
 - On Linux, `hostname -I` shows the address.
 - Give each computer a **fixed address** in your router (DHCP reservation), so it keeps it.
   If an address changes anyway, edit the computer: its access moves to the new address.
-- Removing a computer takes it off every NFS share. The folders and files stay.
+- Removing a computer takes it off every NFS share. The shares stay: one left without any
+  computer shows **Nobody can connect** until you allow someone again (Edit) or stop sharing it.
 
 ## 2. Share a folder
 

@@ -409,6 +409,11 @@ function nfs_state() {
 	return length(s) ? s : 'missing';
 }
 
+/* the NFS shares: folder names, also of shares nobody may connect to yet */
+function nfs_shares() {
+	return filter(split(sh(`${NFS} shares 2>/dev/null`), '\n'), (f) => length(f));
+}
+
 /* folder -> { who: 'rw' | 'ro', ... }; who is an IPv4 address or network */
 function nfs_list() {
 	let out = {};
@@ -822,8 +827,8 @@ const methods = {
 			/* NFS shares are set on their own page and don't follow SMB shares, with one exception:
 			 * a folder that becomes a Time Machine share stops being shared over NFS (changes made
 			 * outside Time Machine break its backups) */
-			if (a.timemachine && nfs_state() != 'missing' && nfs_list()[a.folder]) {
-				let err = nfs_run(`set ${shq(a.folder)}`);
+			if (a.timemachine && nfs_state() != 'missing' && index(nfs_shares(), a.folder) >= 0) {
+				let err = nfs_run(`del ${shq(a.folder)}`);
 				if (err) return { ok: true, id: id, warning: `The share was saved, but NFS: ${err}` };
 				return { ok: true, id: id, warning: `Share saved. "${a.folder}" is no longer shared over NFS: Time Machine folders can't be.` };
 			}
@@ -990,13 +995,15 @@ const methods = {
 				push(smb[f] ??= [], s.name);
 				if (s.timemachine) tm[f] = true;
 			}
-			let exp = nfs_list();
-			let shares = map(sort(keys(exp), (a, b) => (lc(a) < lc(b)) ? -1 : 1), (f) => {
+			/* access {} = an NFS share nobody may connect to yet (e.g. its last computer was removed) */
+			let exp = nfs_list(), names = nfs_shares(), is_nfs = {};
+			for (let f in names) is_nfs[f] = true;
+			let shares = map(sort(names, (a, b) => (lc(a) < lc(b)) ? -1 : 1), (f) => {
 				let st = lstat(`${DATA}/${f}`);
 				return { folder: f, path: `${DATA}/${f}`, exists: !!(st && st.type == 'directory'),
-					access: exp[f], smb: smb[f] ?? [] };
+					access: exp[f] ?? {}, smb: smb[f] ?? [] };
 			});
-			let folders = map(folder_list(), (f) => ({ name: f, smb: smb[f] ?? [], timemachine: !!tm[f], nfs: !!exp[f] }));
+			let folders = map(folder_list(), (f) => ({ name: f, smb: smb[f] ?? [], timemachine: !!tm[f], nfs: !!is_nfs[f] }));
 			/* ip: for the mount hint. An IPv4 address, not nas.local: .local can resolve to the
 			 * link-local IPv6 address, which isn't in the allowed network */
 			let ip = trim(sh("ip -4 -o addr show br-lan 2>/dev/null | awk '{ split($4, a, \"/\"); print a[1]; exit }'"));
@@ -1005,8 +1012,9 @@ const methods = {
 		}
 	},
 
-	// share a folder over NFS (or change who may connect). old: the folder it had, when the
-	// share moves to another folder; create: make a new folder in /mnt/data first
+	// share a folder over NFS (or change who may connect; nobody is allowed too: the share stays).
+	// old: the folder it had, when the share moves to another folder; create: make a new folder
+	// in /mnt/data first
 	nfs_share_save: {
 		args: { folder: 'folder', old: 'old', create: false, access: {} },
 		call: function(req) {
@@ -1016,7 +1024,6 @@ const methods = {
 			let want = [];
 			for (let w, m in (type(a.access) == 'object' ? a.access : {}))
 				if (valid_nfs_who(w) && m in [ 'rw', 'ro' ]) push(want, shq(`${w}=${m}`));
-			if (!length(want)) return { error: 'Choose at least one computer that may connect.' };
 
 			let path = `${DATA}/${a.folder}`;
 			if (!stat(path)) {
@@ -1025,7 +1032,7 @@ const methods = {
 				chmod(path, 0o755);
 			}
 			if (type(a.old) == 'string' && length(a.old) && a.old != a.folder && valid_folder_name(a.old)) {
-				let err = nfs_run(`set ${shq(a.old)}`);
+				let err = nfs_run(`del ${shq(a.old)}`);
 				if (err) return { error: err };
 			}
 			let err = nfs_run(`set ${shq(a.folder)} ${join(' ', want)}`);
@@ -1040,7 +1047,7 @@ const methods = {
 		call: function(req) {
 			if (nfs_state() == 'missing') return { error: 'The NFS plugin is not installed.' };
 			if (!valid_folder_name(req.args.folder)) return { error: 'Unknown folder.' };
-			let err = nfs_run(`set ${shq(req.args.folder)}`);
+			let err = nfs_run(`del ${shq(req.args.folder)}`);
 			if (err) return { error: err };
 			return { ok: true };
 		}
