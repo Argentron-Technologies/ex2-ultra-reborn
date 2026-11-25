@@ -19,7 +19,7 @@ write_rc() {
 defaults
 auth on
 tls on
-tls_starttls on
+tls_starttls $([ "$(cfg smtp_port)" = "465" ] && echo off || echo on)
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
 logfile /tmp/nas-alert.log
 timeout 20
